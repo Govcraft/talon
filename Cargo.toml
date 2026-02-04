@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "crates/talon-core",
     "crates/talon-channels",
-    "crates/talon-registry",
     "crates/talon-cli",
     "bin/talon-core",
     "bin/talon-telegram",
