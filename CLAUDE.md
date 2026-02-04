@@ -101,3 +101,6 @@ pub struct SecureSkillRegistry {
 
 - `talon-core`, `talon-cli`, `talon-telegram`, `talon-discord`: MIT (open source)
 - `talon-hub`: Proprietary (hosted service)
+
+## Development Approach
+- Always use the /rust-planner skill to plan out implementations and write to a new plan file.- Always use the /rust-author skill to do the actual Rust implementation passing the plan file as an input.
