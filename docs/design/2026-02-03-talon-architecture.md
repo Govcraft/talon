@@ -14,9 +14,9 @@ Talon is a secure multi-channel AI assistant that addresses the security vulnera
 - Defense-in-depth: even attested skills run scripts in Hyperlight sandbox
 - User-controlled trust roots for enterprise/personal skills
 
-**Licensing:**
-- All crates: MIT OR Apache-2.0 (open-source)
-- TalonHub hosted service: Proprietary
+**Repositories & Licensing:**
+- **Govcraft/talon** (public): MIT OR Apache-2.0 - Core tools and channels
+- **Govcraft/talon-hub** (private): Proprietary - Registry service
 
 **Target channels (MVP):**
 - Terminal (CLI)
@@ -73,31 +73,44 @@ Talon is a secure multi-channel AI assistant that addresses the security vulnera
 - Process isolation (channel crash does not take down core)
 - Multi-user ready (multiple CLI sessions)
 
-### Crate Structure
+### Repository Structure
 
-| Crate | Purpose | License |
-|-------|---------|---------|
-| talon-core | Router, conversation actors, SecureSkillRegistry, IPC | MIT/Apache-2.0 |
-| talon-channels | Terminal, Telegram, Discord adapters | MIT/Apache-2.0 |
-| talon-registry | HTTP registry implementing Dht trait (TalonHub backend) | MIT/Apache-2.0 |
-| talon-cli | User-facing CLI application | MIT/Apache-2.0 |
+**Govcraft/talon** (public, MIT/Apache-2.0):
+| Crate | Purpose |
+|-------|---------|
+| talon-core | Router, conversation actors, SecureSkillRegistry, IPC |
+| talon-channels | Terminal, Telegram, Discord adapters |
+| talon-cli | User-facing CLI application |
+| talon-daemon | Core background service binary |
+| talon-telegram | Telegram bot binary |
+| talon-discord | Discord bot binary |
+
+**Govcraft/talon-hub** (private, Proprietary):
+| Crate | Purpose |
+|-------|---------|
+| talon-hub | TalonHub registry HTTP service |
 
 **Note:** No separate talon-skills crate needed - we extend acton-ai's existing `agent-skills` feature with attestation verification.
 
 ### Foundational Dependencies
 
-| Crate | Version | Source | Purpose |
-|-------|---------|--------|---------|
-| acton-ai | 0.24.0+ | local | Actor model, LLM providers, Hyperlight sandbox, SkillRegistry |
-| acton-reactive | 7.1.0 | crates.io | Actor system + IPC via UDS |
-| acton-service | 0.15.0 | crates.io | TalonHub HTTP backend |
-| agent-uri | latest | local | URI parsing, capability paths, trust roots |
-| agent-uri-attestation | latest | local | PASETO v4.public tokens, verification |
-| agent-uri-dht | latest | local | Dht trait, key derivation |
-| agent-skills | 0.2.0 | crates.io | Skill format parsing (used by acton-ai) |
-| omnibor | 0.10.0 | crates.io | Skill integrity (gitoid) |
-| teloxide | 0.17.0 | crates.io | Telegram bot API |
-| serenity | 0.12.5 | crates.io | Discord bot API |
+| Crate | Version | Purpose |
+|-------|---------|---------|
+| acton-ai | 0.24 | Actor model, LLM providers, Hyperlight sandbox, SkillRegistry |
+| acton-reactive | 7.1 | Actor system + IPC via UDS |
+| acton-service | 0.15 | TalonHub HTTP backend |
+| agent-uri | 0.4 | URI parsing, capability paths, trust roots |
+| agent-uri-attestation | 0.2 | PASETO v4.public tokens, verification |
+| agent-uri-dht | 0.1 | Dht trait, key derivation |
+| agent-skills | 0.2 | Skill format parsing (used by acton-ai) |
+| omnibor | 0.10 | Skill integrity (gitoid) |
+| mti | 1.1 | TypeID-based identifiers |
+| teloxide | 0.17 | Telegram bot API |
+| serenity | 0.12 | Discord bot API |
+| crossterm | 0.29 | Terminal I/O |
+| ratatui | 0.30 | Terminal UI |
+
+All dependencies are available on crates.io.
 | crossterm | 0.29.0 | crates.io | Terminal I/O |
 | ratatui | 0.30.0 | crates.io | Terminal UI |
 
