@@ -1,0 +1,66 @@
+//! IPC message definitions
+
+use serde::{Deserialize, Serialize};
+
+use crate::types::{ChannelId, ConversationId, CorrelationId, SenderId};
+
+/// Message from channel to core
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ChannelToCore {
+    /// New user message
+    UserMessage {
+        /// Correlation ID for tracking
+        correlation_id: CorrelationId,
+        /// Conversation ID (boxed to reduce enum size)
+        conversation_id: Box<ConversationId>,
+        /// Sender identity (boxed to reduce enum size)
+        sender: Box<SenderId>,
+        /// Message content
+        content: String,
+    },
+    /// Channel registration
+    Register {
+        /// Channel identifier
+        channel_id: ChannelId,
+    },
+    /// Channel disconnecting
+    Disconnect {
+        /// Channel identifier
+        channel_id: ChannelId,
+    },
+}
+
+/// Message from core to channel
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum CoreToChannel {
+    /// Streaming token
+    Token {
+        /// Correlation ID for tracking
+        correlation_id: CorrelationId,
+        /// Conversation ID (boxed to reduce enum size)
+        conversation_id: Box<ConversationId>,
+        /// Token content
+        token: String,
+    },
+    /// Stream complete
+    Complete {
+        /// Correlation ID for tracking
+        correlation_id: CorrelationId,
+        /// Conversation ID (boxed to reduce enum size)
+        conversation_id: Box<ConversationId>,
+        /// Full response content
+        content: String,
+    },
+    /// Error occurred
+    Error {
+        /// Correlation ID for tracking
+        correlation_id: CorrelationId,
+        /// Error message
+        message: String,
+    },
+    /// Registration acknowledged
+    Registered {
+        /// Channel identifier
+        channel_id: ChannelId,
+    },
+}

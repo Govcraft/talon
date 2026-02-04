@@ -1,0 +1,32 @@
+[package]
+name = "talon-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Core daemon library for Talon secure multi-channel AI assistant"
+
+[features]
+default = []
+
+[dependencies]
+# NOTE: acton-ai requires local clone - uncomment when available:
+# acton-ai.workspace = true
+acton-reactive.workspace = true
+# NOTE: agent-uri crates require local development - uncomment when available:
+# agent-uri.workspace = true
+# agent-uri-attestation.workspace = true
+# agent-uri-dht.workspace = true
+omnibor.workspace = true
+tokio.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+mti.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+toml = "0.8"
+dirs = "5.0"

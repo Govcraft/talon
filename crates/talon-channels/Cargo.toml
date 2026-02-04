@@ -1,0 +1,30 @@
+[package]
+name = "talon-channels"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Multi-platform communication channel adapters for Talon"
+
+[features]
+default = ["terminal"]
+terminal = ["dep:crossterm", "dep:ratatui"]
+telegram = ["dep:teloxide"]
+discord = ["dep:serenity"]
+
+[dependencies]
+talon-core = { path = "../talon-core" }
+tokio.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+
+# Optional channel deps - specified directly since optional deps can't be in workspace
+crossterm = { version = "0.29", optional = true }
+ratatui = { version = "0.30", optional = true }
+teloxide = { version = "0.17", optional = true }
+serenity = { version = "0.12", optional = true }

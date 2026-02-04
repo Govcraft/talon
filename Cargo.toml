@@ -1,0 +1,54 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/talon-core",
+    "crates/talon-channels",
+    "crates/talon-registry",
+    "crates/talon-cli",
+    "bin/talon-core",
+    "bin/talon-telegram",
+    "bin/talon-discord",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Govcraft/talon"
+authors = ["Roland R. Rodriguez, Jr. <rrrodzilla@proton.me>"]
+
+[workspace.dependencies]
+# Core framework
+# NOTE: acton-ai requires local clone - uncomment when available:
+# acton-ai = { path = "../acton-ai", features = ["agent-skills"] }
+acton-reactive = { version = "7.1", features = ["ipc"] }
+
+# Identity & Security
+# NOTE: agent-uri crates require local development - uncomment when available:
+# agent-uri = { path = "../agent-uri/crates/agent-uri" }
+# agent-uri-attestation = { path = "../agent-uri/crates/agent-uri-attestation" }
+# agent-uri-dht = { path = "../agent-uri/crates/agent-uri-dht" }
+omnibor = "0.10"
+
+# Async runtime
+tokio = { version = "1.43", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# IDs
+mti = "1.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }

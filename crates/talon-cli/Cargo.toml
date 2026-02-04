@@ -1,0 +1,21 @@
+[package]
+name = "talon-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Command-line interface for Talon AI assistant"
+
+[[bin]]
+name = "talon"
+path = "src/main.rs"
+
+[dependencies]
+talon-core = { path = "../talon-core" }
+talon-channels = { path = "../talon-channels", features = ["terminal"] }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true

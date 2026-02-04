@@ -1,0 +1,20 @@
+[package]
+name = "talon-telegram"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Talon Telegram bot channel"
+
+[[bin]]
+name = "talon-telegram"
+path = "src/main.rs"
+
+[dependencies]
+talon-core = { path = "../../crates/talon-core" }
+talon-channels = { path = "../../crates/talon-channels", features = ["telegram"] }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
