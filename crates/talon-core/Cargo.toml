@@ -28,3 +28,6 @@ tracing.workspace = true
 chrono.workspace = true
 toml = "0.8"
 dirs = "5.0"
+
+[lints]
+workspace = true

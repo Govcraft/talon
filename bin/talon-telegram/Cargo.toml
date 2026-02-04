@@ -18,3 +18,6 @@ talon-channels = { path = "../../crates/talon-channels", features = ["telegram"]
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
