@@ -20,19 +20,18 @@ authors = ["Roland R. Rodriguez, Jr. <rrrodzilla@proton.me>"]
 
 [workspace.dependencies]
 # Core framework
-# NOTE: acton-ai requires local clone - uncomment when available:
-# acton-ai = { path = "../acton-ai", features = ["agent-skills"] }
+acton-ai = { version = "0.24", features = ["agent-skills"] }
 acton-reactive = { version = "7.1", features = ["ipc"] }
+acton-service = { version = "0.15" }
 
 # Identity & Security
-# NOTE: agent-uri crates require local development - uncomment when available:
-# agent-uri = { path = "../agent-uri/crates/agent-uri" }
-# agent-uri-attestation = { path = "../agent-uri/crates/agent-uri-attestation" }
-# agent-uri-dht = { path = "../agent-uri/crates/agent-uri-dht" }
+agent-uri = { version = "0.4", features = ["serde"] }
+agent-uri-attestation = "0.2"
+agent-uri-dht = { version = "0.1", features = ["serde"] }
 omnibor = "0.10"
 
 # Async runtime
-tokio = { version = "1.43", features = ["full"] }
+tokio = { version = "1.49", features = ["full"] }
 futures = "0.3"
 async-trait = "0.1"
 
@@ -41,7 +40,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # IDs
-mti = "1.1"
+mti = { version = "1.1", features = ["serde"] }
 
 # Logging
 tracing = "0.1"
@@ -52,3 +51,9 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+
+# Channel dependencies
+teloxide = "0.17"
+serenity = "0.12"
+crossterm = { version = "0.29", features = ["event-stream"] }
+ratatui = "0.30"

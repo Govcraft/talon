@@ -10,8 +10,6 @@ description = "TalonHub HTTP registry service for skill discovery and verificati
 
 [dependencies]
 talon-core = { path = "../talon-core" }
-# NOTE: acton-service 0.15.0 has a bug with the auth feature requiring rand.
-# Using reduced feature set until fix is available.
 acton-service = { version = "0.15", features = [
     "http",
     "database",
@@ -21,10 +19,10 @@ acton-service = { version = "0.15", features = [
     "openapi",
     "governor",
     "pagination-full",
+    "jwt",
 ] }
-# NOTE: agent-uri crates require local development - uncomment when available:
-# agent-uri.workspace = true
-# agent-uri-attestation.workspace = true
+agent-uri.workspace = true
+agent-uri-attestation.workspace = true
 omnibor.workspace = true
 tokio.workspace = true
 serde.workspace = true
