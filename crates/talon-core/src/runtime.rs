@@ -14,7 +14,7 @@ use acton_reactive::prelude::*;
 use tracing::info;
 
 use crate::error::{TalonError, TalonResult};
-use crate::ipc::{DefaultIpcHandler, TokenAuthenticator};
+use crate::ipc::{DefaultIpcHandler, IpcServer, IpcServerConfig, TokenAuthenticator};
 use crate::router::{Router, RouterConfig};
 use crate::skills::{SecureSkillRegistry, SecureSkillRegistryConfig};
 
@@ -76,6 +76,8 @@ pub struct TalonRuntime {
     skill_registry: Arc<SecureSkillRegistry>,
     /// IPC message handler
     ipc_handler: Arc<DefaultIpcHandler>,
+    /// IPC server
+    ipc_server: Option<Arc<IpcServer>>,
     /// Runtime configuration
     config: RuntimeConfig,
     /// Whether the router has been started
@@ -132,6 +134,7 @@ impl TalonRuntime {
             runtime,
             skill_registry,
             ipc_handler,
+            ipc_server: None,
             config,
             router_started: true,
         })
@@ -167,25 +170,49 @@ impl TalonRuntime {
     ///
     /// Returns error if the listener cannot be started.
     pub async fn start_ipc(&mut self) -> TalonResult<()> {
-        // Ensure the socket directory exists
-        if let Some(parent) = self.config.ipc_socket_path.parent() {
-            std::fs::create_dir_all(parent)?;
+        if self.ipc_server.is_some() {
+            return Err(TalonError::Ipc {
+                message: "IPC server already started".to_string(),
+            });
         }
 
-        // Remove existing socket if present
-        if self.config.ipc_socket_path.exists() {
-            std::fs::remove_file(&self.config.ipc_socket_path)?;
-        }
+        let server_config = IpcServerConfig {
+            socket_path: self.config.ipc_socket_path.clone(),
+            ..IpcServerConfig::default()
+        };
+
+        let server = Arc::new(IpcServer::new(
+            server_config,
+            Arc::clone(&self.ipc_handler) as Arc<dyn crate::ipc::IpcMessageHandler>,
+        ));
+
+        server.start().await?;
+
+        self.ipc_server = Some(server);
 
         info!(
             socket_path = %self.config.ipc_socket_path.display(),
-            "IPC listener starting"
+            "IPC server started"
         );
 
-        // NOTE: Actual IPC listener setup would use acton-reactive's IPC features
-        // This is a placeholder for the integration
-
         Ok(())
+    }
+
+    /// Check if the IPC server is running
+    #[must_use]
+    pub fn is_ipc_running(&self) -> bool {
+        self.ipc_server
+            .as_ref()
+            .map(|s| s.is_running())
+            .unwrap_or(false)
+    }
+
+    /// Get access to the token authenticator for issuing channel tokens
+    ///
+    /// This is useful for the CLI to generate tokens for new channels.
+    #[must_use]
+    pub fn issue_channel_token(&self, channel_id: &crate::types::ChannelId) -> crate::ipc::AuthToken {
+        self.ipc_handler.issue_token(channel_id)
     }
 
     /// Graceful shutdown of the runtime
@@ -196,6 +223,11 @@ impl TalonRuntime {
     pub async fn shutdown(mut self) -> TalonResult<()> {
         info!("shutting down Talon runtime");
 
+        // Stop IPC server first
+        if let Some(server) = self.ipc_server.take() {
+            server.stop().await?;
+        }
+
         // Shutdown the actor runtime
         self.runtime
             .shutdown_all()
@@ -204,7 +236,7 @@ impl TalonRuntime {
                 message: format!("shutdown failed: {e}"),
             })?;
 
-        // Clean up the socket
+        // Clean up the socket (should already be removed by server.stop())
         if self.config.ipc_socket_path.exists() {
             std::fs::remove_file(&self.config.ipc_socket_path)?;
         }

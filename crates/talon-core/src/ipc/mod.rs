@@ -6,11 +6,14 @@
 //! - Message types for channel-to-core and core-to-channel communication
 //! - HMAC-SHA256 token authentication
 //! - Message handlers for processing incoming requests
+//! - IPC server for accepting channel connections
 
 mod auth;
 mod handlers;
 mod messages;
+mod server;
 
 pub use auth::{AuthToken, TokenAuthenticator, ValidatedToken};
 pub use handlers::{DefaultIpcHandler, IpcMessageHandler, LoggingHandler};
 pub use messages::{ChannelToCore, CoreToChannel};
+pub use server::{IpcServer, IpcServerConfig};

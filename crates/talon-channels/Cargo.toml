@@ -11,7 +11,7 @@ description = "Multi-platform communication channel adapters for Talon"
 [features]
 default = ["terminal"]
 terminal = ["dep:crossterm", "dep:ratatui"]
-telegram = ["dep:teloxide"]
+telegram = ["dep:teloxide", "dep:secrecy"]
 discord = ["dep:serenity"]
 
 [dependencies]
@@ -20,14 +20,19 @@ tokio.workspace = true
 futures.workspace = true
 async-trait.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 chrono.workspace = true
+dirs = "5"
 
 # Optional channel deps - specified directly since optional deps can't be in workspace
 crossterm = { version = "0.29", optional = true }
 ratatui = { version = "0.30", optional = true }
 teloxide = { version = "0.17", optional = true }
 serenity = { version = "0.12", optional = true }
+
+# Security (for telegram token handling)
+secrecy = { version = "0.10", optional = true }
 
 [lints]
 workspace = true

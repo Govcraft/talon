@@ -20,5 +20,6 @@ pub mod types;
 
 pub use config::TalonConfig;
 pub use error::{TalonError, TalonResult};
+pub use ipc::{ChannelToCore, CoreToChannel};
 pub use runtime::{RuntimeConfig, RuntimeConfigBuilder, TalonRuntime};
 pub use types::*;
