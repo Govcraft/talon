@@ -17,6 +17,7 @@ Modern AI assistants with plugin/skill systems face serious security challenges:
 | **Prompt Injection** | Full local file/network access | Capability-gated tools based on attestation | Limits blast radius |
 | **Script Execution** | Runs as user with full permissions | Hyperlight WebAssembly sandbox | Hardware-level isolation |
 | **API Key Theft** | Skills can read environment variables | Sandboxed scripts cannot access env | Protects credentials |
+| **Secret Storage** | Plain text config files | systemd-creds encrypted with host key (or TPM2) | Secrets encrypted at rest |
 | **Over-Permissioned Skills** | No enforcement of declared permissions | `allowed-tools` verified against attestation | Enforces least privilege |
 | **Trust Model** | Implicit trust - install and hope | Explicit trust roots + graduated tiers | User controls trust decisions |
 | **Registry Security** | Centralized, single point of failure | Federated trust roots via DHT trait | Decentralized verification |
