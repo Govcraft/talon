@@ -5,16 +5,20 @@
 //! - Conversation management
 //! - SecureSkillRegistry with attestation verification
 //! - Trust tier enforcement
+//! - Capability-verified tool execution
+//! - Token-based channel authentication
 
 pub mod config;
 pub mod conversation;
 pub mod error;
 pub mod ipc;
 pub mod router;
+pub mod runtime;
 pub mod skills;
 pub mod trust;
 pub mod types;
 
 pub use config::TalonConfig;
 pub use error::{TalonError, TalonResult};
+pub use runtime::{RuntimeConfig, RuntimeConfigBuilder, TalonRuntime};
 pub use types::*;

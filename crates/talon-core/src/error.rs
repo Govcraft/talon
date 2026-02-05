@@ -1,5 +1,6 @@
 //! Talon error types
 
+use chrono::{DateTime, Utc};
 use std::fmt;
 
 /// Result type alias for Talon operations
@@ -83,6 +84,38 @@ pub enum TalonError {
         /// Error description
         message: String,
     },
+
+    /// ActonAI integration error
+    ActonAI {
+        /// Error description
+        message: String,
+    },
+
+    /// Tool execution failed
+    ToolExecution {
+        /// Tool name
+        tool: String,
+        /// Failure reason
+        reason: String,
+    },
+
+    /// Channel not authenticated
+    Unauthenticated {
+        /// Channel identifier
+        channel_id: String,
+    },
+
+    /// Authentication failed
+    AuthenticationFailed {
+        /// Failure reason
+        reason: String,
+    },
+
+    /// Authentication token expired
+    TokenExpired {
+        /// When the token expired
+        expired_at: DateTime<Utc>,
+    },
 }
 
 impl fmt::Display for TalonError {
@@ -109,6 +142,19 @@ impl fmt::Display for TalonError {
             }
             Self::Io { message } => write!(f, "IO error: {message}"),
             Self::Serialization { message } => write!(f, "serialization error: {message}"),
+            Self::ActonAI { message } => write!(f, "acton-ai error: {message}"),
+            Self::ToolExecution { tool, reason } => {
+                write!(f, "tool execution failed for {tool}: {reason}")
+            }
+            Self::Unauthenticated { channel_id } => {
+                write!(f, "channel {channel_id} is not authenticated")
+            }
+            Self::AuthenticationFailed { reason } => {
+                write!(f, "authentication failed: {reason}")
+            }
+            Self::TokenExpired { expired_at } => {
+                write!(f, "authentication token expired at {expired_at}")
+            }
         }
     }
 }

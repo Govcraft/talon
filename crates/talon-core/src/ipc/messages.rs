@@ -28,6 +28,13 @@ pub enum ChannelToCore {
         /// Channel identifier
         channel_id: ChannelId,
     },
+    /// Channel authentication request
+    Authenticate {
+        /// Channel identifier
+        channel_id: ChannelId,
+        /// Authentication token
+        token: String,
+    },
 }
 
 /// Message from core to channel
@@ -62,5 +69,12 @@ pub enum CoreToChannel {
     Registered {
         /// Channel identifier
         channel_id: ChannelId,
+    },
+    /// Authentication result
+    AuthenticationResult {
+        /// Whether authentication succeeded
+        success: bool,
+        /// Error message if failed
+        error: Option<String>,
     },
 }

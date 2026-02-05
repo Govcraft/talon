@@ -5,4 +5,7 @@
 
 mod actor;
 
-pub use actor::Router;
+pub use actor::{
+    ConversationCreated, CreateConversation, EndConversation, GetStats, MessageRouted, Router,
+    RouterConfig, RouterStats, RouteMessage,
+};

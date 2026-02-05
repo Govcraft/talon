@@ -75,6 +75,7 @@ impl Default for SecureSkillRegistryConfig {
 /// - Trust tier enforcement
 /// - Capability-based access control
 pub struct SecureSkillRegistry {
+    // Note: Manual Debug impl to avoid exposing sensitive verifier details
     /// The underlying skill registry from acton-ai
     inner: SkillRegistry,
 
@@ -95,6 +96,15 @@ pub struct SecureSkillRegistry {
 
     /// Configuration
     config: SecureSkillRegistryConfig,
+}
+
+impl std::fmt::Debug for SecureSkillRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecureSkillRegistry")
+            .field("verified_skills_count", &self.verified_skills.len())
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SecureSkillRegistry {
