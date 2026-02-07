@@ -1,0 +1,49 @@
+version: '3'
+
+dotenv: ['.env']
+
+vars:
+  RUST_LOG: '{{.RUST_LOG | default "info"}}'
+
+tasks:
+  build:
+    desc: Build all binaries
+    sources:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**/*.rs
+      - crates/**/Cargo.toml
+      - bin/**/*.rs
+      - bin/**/Cargo.toml
+    cmd: cargo build
+
+  check:
+    desc: Fast compilation check
+    cmd: cargo check
+
+  test:
+    desc: Run all tests
+    cmd: cargo nextest run
+
+  lint:
+    desc: Lint with zero tolerance
+    cmd: cargo clippy -- -D warnings
+
+  daemon:
+    desc: Start only the daemon
+    cmd: RUST_LOG={{.RUST_LOG}} cargo run --bin talon-daemon
+
+  telegram:
+    desc: Start only the Telegram bot (needs sudo for credstore)
+    deps: [build]
+    cmd: sudo RUST_LOG={{.RUST_LOG}} ./target/debug/talon-telegram
+
+  dev:
+    desc: Start daemon and Telegram bot for development
+    deps: [build]
+    cmd: |
+      trap 'kill 0' EXIT
+      RUST_LOG={{.RUST_LOG}} ./target/debug/talon-daemon 2>&1 &
+      sleep 2
+      sudo RUST_LOG={{.RUST_LOG}} ./target/debug/talon-telegram 2>&1 &
+      wait

@@ -27,5 +27,13 @@ Thumbs.db
 *.profdata
 /coverage/
 
+# Task runner
+.task/
+
+# Environment
+.env
+.env.*
+!.env.example
+
 # Documentation
 /docs/api/
