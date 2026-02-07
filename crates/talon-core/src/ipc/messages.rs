@@ -40,6 +40,13 @@ pub enum ChannelToCore {
 /// Message from core to channel
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum CoreToChannel {
+    /// Processing indication - message is being processed by LLM
+    Processing {
+        /// Correlation ID for tracking
+        correlation_id: CorrelationId,
+        /// Conversation ID (boxed to reduce enum size)
+        conversation_id: Box<ConversationId>,
+    },
     /// Streaming token
     Token {
         /// Correlation ID for tracking

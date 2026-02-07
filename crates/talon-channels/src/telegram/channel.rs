@@ -109,9 +109,9 @@ impl Channel for TelegramChannel {
         let bot = self.bot.clone();
 
         // Build dispatcher with dependencies
+        // Note: We handle Ctrl+C ourselves in main.rs, so don't enable teloxide's handler
         let mut dispatcher = Dispatcher::builder(bot, handler)
             .dependencies(dptree::deps![sender, id_mapper, channel_id])
-            .enable_ctrlc_handler()
             .build();
 
         // Store shutdown token for graceful shutdown

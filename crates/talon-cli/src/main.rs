@@ -26,6 +26,8 @@ enum Commands {
     Skills(commands::SkillsArgs),
     /// Manage configuration
     Config(commands::ConfigArgs),
+    /// Manage channels (telegram, discord)
+    Channel(commands::ChannelArgs),
 }
 
 #[tokio::main]
@@ -44,6 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Chat(args)) => commands::chat(args).await?,
         Some(Commands::Skills(args)) => commands::skills(args).await?,
         Some(Commands::Config(args)) => commands::config(args).await?,
+        Some(Commands::Channel(args)) => commands::channel(args).await?,
         None => {
             // Default to interactive chat
             commands::chat(commands::ChatArgs::default()).await?;

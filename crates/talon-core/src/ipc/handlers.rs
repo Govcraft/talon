@@ -6,7 +6,9 @@
 use async_trait::async_trait;
 use dashmap::DashMap;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
+
+use acton_ai::prelude::*;
 
 use crate::error::{TalonError, TalonResult};
 use crate::ipc::auth::{AuthToken, TokenAuthenticator, ValidatedToken};
@@ -37,12 +39,16 @@ pub trait IpcMessageHandler: Send + Sync {
 
 /// Default IPC message handler implementation
 ///
-/// Handles authentication and basic message routing.
+/// Handles authentication, LLM processing, and message routing.
 pub struct DefaultIpcHandler {
     /// Token authenticator
     authenticator: TokenAuthenticator,
     /// Map of authenticated channels to their validated tokens
     authenticated_channels: Arc<DashMap<String, ValidatedToken>>,
+    /// ActonAI runtime for processing messages (with built-in tools)
+    acton_ai: Option<Arc<ActonAI>>,
+    /// Conversation histories per conversation ID
+    conversations: Arc<DashMap<String, Vec<Message>>>,
 }
 
 impl DefaultIpcHandler {
@@ -56,6 +62,24 @@ impl DefaultIpcHandler {
         Self {
             authenticator,
             authenticated_channels: Arc::new(DashMap::new()),
+            acton_ai: None,
+            conversations: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Create a new handler with ActonAI runtime (with built-in tools)
+    ///
+    /// # Arguments
+    ///
+    /// * `authenticator` - The token authenticator to use
+    /// * `acton_ai` - The ActonAI runtime with built-in tools enabled
+    #[must_use]
+    pub fn with_acton_ai(authenticator: TokenAuthenticator, acton_ai: Arc<ActonAI>) -> Self {
+        Self {
+            authenticator,
+            authenticated_channels: Arc::new(DashMap::new()),
+            acton_ai: Some(acton_ai),
+            conversations: Arc::new(DashMap::new()),
         }
     }
 
@@ -201,13 +225,68 @@ impl IpcMessageHandler for DefaultIpcHandler {
                     "processing user message"
                 );
 
-                // For now, return a placeholder response
-                // The actual routing will be handled by the Router actor
-                Ok(CoreToChannel::Complete {
-                    correlation_id,
-                    conversation_id,
-                    content,
-                })
+                // Process with ActonAI (includes built-in tools)
+                if let Some(ai) = &self.acton_ai {
+                    // Get or create conversation history
+                    let conv_key = conversation_id.to_string();
+                    let mut history: Vec<Message> = self
+                        .conversations
+                        .get(&conv_key)
+                        .map(|h| h.clone())
+                        .unwrap_or_default();
+
+                    // Add user message to history
+                    history.push(Message::user(&content));
+
+                    debug!(
+                        history_len = history.len(),
+                        "continuing conversation with history"
+                    );
+
+                    // Continue conversation with history
+                    match ai.continue_with(history.clone()).collect().await {
+                        Ok(response) => {
+                            debug!(
+                                response_len = response.text.len(),
+                                tool_calls = response.tool_calls.len(),
+                                "received LLM response"
+                            );
+
+                            // Guard against empty responses
+                            let response_text = if response.text.is_empty() {
+                                warn!("LLM returned empty response, using fallback");
+                                "I received your message but couldn't generate a response. Please try again.".to_string()
+                            } else {
+                                response.text
+                            };
+
+                            // Add assistant response to history
+                            history.push(Message::assistant(&response_text));
+                            self.conversations.insert(conv_key, history);
+
+                            Ok(CoreToChannel::Complete {
+                                correlation_id,
+                                conversation_id,
+                                content: response_text,
+                            })
+                        }
+                        Err(e) => {
+                            error!(error = %e, "ActonAI error");
+                            Ok(CoreToChannel::Error {
+                                correlation_id,
+                                message: format!("LLM error: {e}"),
+                            })
+                        }
+                    }
+                } else {
+                    // Echo back if no AI configured (for testing)
+                    debug!("no ActonAI configured, echoing message");
+                    Ok(CoreToChannel::Complete {
+                        correlation_id,
+                        conversation_id,
+                        content: format!("Echo (no AI): {content}"),
+                    })
+                }
             }
         }
     }

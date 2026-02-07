@@ -38,6 +38,9 @@ impl std::fmt::Display for ClientState {
     }
 }
 
+/// Callback type for processing indication
+pub type ProcessingCallback = Arc<dyn Fn(ConversationId) + Send + Sync>;
+
 /// Callback type for streaming tokens
 pub type TokenCallback = Arc<dyn Fn(ConversationId, String) + Send + Sync>;
 
@@ -61,6 +64,7 @@ pub struct IpcClient {
     /// Writer half - used by send operations
     writer: Arc<Mutex<Option<IpcWriter>>>,
     state: Arc<RwLock<ClientState>>,
+    processing_callback: Arc<RwLock<Option<ProcessingCallback>>>,
     token_callback: Arc<RwLock<Option<TokenCallback>>>,
     complete_callback: Arc<RwLock<Option<CompleteCallback>>>,
     error_callback: Arc<RwLock<Option<ErrorCallback>>>,
@@ -75,6 +79,7 @@ impl IpcClient {
             reader: Arc::new(Mutex::new(None)),
             writer: Arc::new(Mutex::new(None)),
             state: Arc::new(RwLock::new(ClientState::Disconnected)),
+            processing_callback: Arc::new(RwLock::new(None)),
             token_callback: Arc::new(RwLock::new(None)),
             complete_callback: Arc::new(RwLock::new(None)),
             error_callback: Arc::new(RwLock::new(None)),
@@ -322,6 +327,11 @@ impl IpcClient {
         Ok(())
     }
 
+    /// Set callback for processing indication
+    pub async fn set_processing_callback(&self, callback: ProcessingCallback) {
+        *self.processing_callback.write().await = Some(callback);
+    }
+
     /// Set callback for streaming tokens
     pub async fn set_token_callback(&self, callback: TokenCallback) {
         *self.token_callback.write().await = Some(callback);
@@ -348,6 +358,7 @@ impl IpcClient {
     pub fn start_receive_loop(&self) -> tokio::task::JoinHandle<()> {
         let reader = Arc::clone(&self.reader);
         let state = Arc::clone(&self.state);
+        let processing_callback = Arc::clone(&self.processing_callback);
         let token_callback = Arc::clone(&self.token_callback);
         let complete_callback = Arc::clone(&self.complete_callback);
         let error_callback = Arc::clone(&self.error_callback);
@@ -375,6 +386,15 @@ impl IpcClient {
                 match result {
                     Ok(message) => {
                         match message {
+                            CoreToChannel::Processing {
+                                correlation_id: _,
+                                conversation_id,
+                            } => {
+                                debug!(conversation_id = %conversation_id, "received processing");
+                                if let Some(callback) = processing_callback.read().await.as_ref() {
+                                    callback(*conversation_id);
+                                }
+                            }
                             CoreToChannel::Token {
                                 correlation_id: _,
                                 conversation_id,

@@ -85,6 +85,11 @@ impl TelegramConfig {
 
     /// Load token from systemd credentials directory
     fn load_from_credentials() -> Result<SecretString, TelegramConfigError> {
+        // Check environment variable first (for development/testing without sudo)
+        if let Ok(token) = std::env::var("TELEGRAM_BOT_TOKEN") {
+            return Ok(SecretString::from(token));
+        }
+
         // Check if running under systemd with credentials
         if let Ok(creds_dir) = std::env::var("CREDENTIALS_DIRECTORY") {
             let cred_path = PathBuf::from(creds_dir).join(CREDENTIAL_NAME);

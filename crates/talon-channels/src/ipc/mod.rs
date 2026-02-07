@@ -51,7 +51,9 @@ mod config;
 mod connection;
 mod error;
 
-pub use client::{ClientState, CompleteCallback, ErrorCallback, IpcClient, TokenCallback};
+pub use client::{
+    ClientState, CompleteCallback, ErrorCallback, IpcClient, ProcessingCallback, TokenCallback,
+};
 pub use config::{IpcClientConfig, IpcClientConfigBuilder};
 pub use connection::{IpcConnection, IpcReader, IpcWriter, MAX_MESSAGE_SIZE};
 pub use error::{IpcClientError, IpcClientResult};

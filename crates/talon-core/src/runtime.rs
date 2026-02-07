@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use acton_reactive::prelude::*;
+use acton_ai::prelude::*;
+use acton_reactive::prelude::{ActonApp, ActorRuntime};
 use tracing::info;
 
 use crate::error::{TalonError, TalonResult};
@@ -49,8 +50,8 @@ impl Default for RuntimeConfig {
             ipc_socket_path: socket_path,
             max_conversations: 1000,
             conversation_timeout: Duration::from_secs(3600),
-            ollama_host: "http://localhost:11434".to_string(),
-            ollama_model: "llama3.2".to_string(),
+            ollama_host: "http://localhost:11434/v1".to_string(),
+            ollama_model: "qwen2.5:7b".to_string(),
             secret_key: generate_default_secret(),
             skill_registry_config: SecureSkillRegistryConfig::default(),
         }
@@ -74,6 +75,8 @@ pub struct TalonRuntime {
     runtime: ActorRuntime,
     /// Secure skill registry
     skill_registry: Arc<SecureSkillRegistry>,
+    /// ActonAI runtime with built-in tools
+    acton_ai: Arc<ActonAI>,
     /// IPC message handler
     ipc_handler: Arc<DefaultIpcHandler>,
     /// IPC server
@@ -113,9 +116,31 @@ impl TalonRuntime {
                 })?,
         );
 
-        // Create the IPC handler
+        // Create ActonAI runtime with built-in tools
+        let acton_ai = ActonAI::builder()
+            .app_name("talon")
+            .ollama_at(&config.ollama_host, &config.ollama_model)
+            .with_builtins()
+            .launch()
+            .await
+            .map_err(|e| TalonError::Config {
+                message: format!("failed to create ActonAI runtime: {e}"),
+            })?;
+
+        let acton_ai = Arc::new(acton_ai);
+
+        info!(
+            ollama_host = %config.ollama_host,
+            ollama_model = %config.ollama_model,
+            "ActonAI runtime created with built-in tools"
+        );
+
+        // Create the IPC handler with ActonAI
         let authenticator = TokenAuthenticator::new(&config.secret_key);
-        let ipc_handler = Arc::new(DefaultIpcHandler::new(authenticator));
+        let ipc_handler = Arc::new(DefaultIpcHandler::with_acton_ai(
+            authenticator,
+            Arc::clone(&acton_ai),
+        ));
 
         // Create and start the router actor
         let _router_config = RouterConfig {
@@ -133,6 +158,7 @@ impl TalonRuntime {
         Ok(Self {
             runtime,
             skill_registry,
+            acton_ai,
             ipc_handler,
             ipc_server: None,
             config,
@@ -150,6 +176,12 @@ impl TalonRuntime {
     #[must_use]
     pub fn skill_registry(&self) -> &Arc<SecureSkillRegistry> {
         &self.skill_registry
+    }
+
+    /// Get the ActonAI runtime
+    #[must_use]
+    pub fn acton_ai(&self) -> &Arc<ActonAI> {
+        &self.acton_ai
     }
 
     /// Get the IPC handler
@@ -324,7 +356,7 @@ mod tests {
         let config = RuntimeConfig::default();
         assert_eq!(config.max_conversations, 1000);
         assert_eq!(config.conversation_timeout, Duration::from_secs(3600));
-        assert_eq!(config.ollama_host, "http://localhost:11434");
+        assert_eq!(config.ollama_host, "http://localhost:11434/v1");
     }
 
     #[test]

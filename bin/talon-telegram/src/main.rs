@@ -23,7 +23,8 @@ use std::sync::Arc;
 use talon_channels::ipc::{IpcClient, IpcClientConfig};
 use talon_channels::{Channel, InboundMessage, TelegramChannel};
 use talon_core::{ChannelId, TalonError, TalonResult};
-use tokio::sync::mpsc;
+use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::{mpsc, Notify};
 use tracing_subscriber::EnvFilter;
 
 /// Load IPC auth token from systemd credentials
@@ -62,6 +63,27 @@ async fn main() -> TalonResult<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+
+    // Set up shutdown signal FIRST, before any other async tasks
+    // This ensures our handler gets registered before anything else
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+
+    tokio::spawn(async move {
+        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+
+        tokio::select! {
+            _ = sigint.recv() => {
+                tracing::info!("SIGINT received");
+            }
+            _ = sigterm.recv() => {
+                tracing::info!("SIGTERM received");
+            }
+        }
+
+        shutdown_signal.notify_waiters();
+    });
 
     tracing::info!("Talon Telegram bot starting");
 
@@ -196,9 +218,14 @@ async fn main() -> TalonResult<()> {
 
     tracing::info!("Telegram bot is running. Press Ctrl+C to stop.");
 
-    // Main event loop
+    // Main event loop - select on shutdown signal or incoming messages
     loop {
         tokio::select! {
+            _ = shutdown.notified() => {
+                tracing::info!("Shutdown signal received, stopping...");
+                break;
+            }
+
             Some(inbound) = inbound_rx.recv() => {
                 tracing::info!(
                     conversation_id = %inbound.conversation_id,
@@ -229,11 +256,6 @@ async fn main() -> TalonResult<()> {
                         );
                     }
                 }
-            }
-
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("Shutdown signal received");
-                break;
             }
         }
     }

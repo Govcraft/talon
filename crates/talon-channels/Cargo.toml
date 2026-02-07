@@ -28,7 +28,7 @@ dirs = "5"
 # Optional channel deps - specified directly since optional deps can't be in workspace
 crossterm = { version = "0.29", optional = true }
 ratatui = { version = "0.30", optional = true }
-teloxide = { version = "0.17", optional = true }
+teloxide = { version = "0.17", optional = true, default-features = false, features = ["macros", "rustls"] }
 serenity = { version = "0.12", optional = true }
 
 # Security (for telegram token handling)
