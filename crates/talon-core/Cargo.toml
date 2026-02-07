@@ -13,6 +13,7 @@ default = []
 
 [dependencies]
 acton-ai.workspace = true
+agent-skills = "0.2"
 acton-reactive.workspace = true
 agent-uri.workspace = true
 agent-uri-attestation.workspace = true

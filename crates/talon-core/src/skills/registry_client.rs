@@ -225,6 +225,55 @@ impl RegistryClient {
         self.get_with_retry(&url).await
     }
 
+    /// Download the skill archive from the registry
+    ///
+    /// Returns the raw bytes of the skill archive (typically a SKILL.md file).
+    ///
+    /// # Arguments
+    ///
+    /// * `agent_uri` - The agent URI of the skill to download
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the download fails or the skill is not found.
+    pub async fn download_skill_archive(
+        &self,
+        agent_uri: &str,
+    ) -> SkillSecurityResult<Vec<u8>> {
+        let encoded_uri = urlencoding::encode(agent_uri);
+        let url = format!(
+            "{}/api/v1/skills/{}/download",
+            self.config.base_url, encoded_uri
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| SkillSecurityError::ArchiveDownloadFailed {
+                agent_uri: agent_uri.to_string(),
+                reason: e.to_string(),
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(SkillSecurityError::ArchiveDownloadFailed {
+                agent_uri: agent_uri.to_string(),
+                reason: format!("HTTP {status}"),
+            });
+        }
+
+        response
+            .bytes()
+            .await
+            .map_err(|e| SkillSecurityError::ArchiveDownloadFailed {
+                agent_uri: agent_uri.to_string(),
+                reason: e.to_string(),
+            })
+            .map(|b| b.to_vec())
+    }
+
     /// Check if a skill exists in the registry
     ///
     /// # Arguments

@@ -122,6 +122,30 @@ pub enum SkillSecurityError {
         /// Description of the cache error
         message: String,
     },
+
+    /// Skill archive download failed
+    ArchiveDownloadFailed {
+        /// The agent URI of the skill whose archive failed to download
+        agent_uri: String,
+        /// Description of the download failure
+        reason: String,
+    },
+
+    /// Skill archive parsing failed
+    ArchiveParseError {
+        /// The agent URI of the skill whose archive failed to parse
+        agent_uri: String,
+        /// Description of the parsing failure
+        reason: String,
+    },
+
+    /// Trust root key fetch failed
+    TrustRootFetchFailed {
+        /// The trust root domain
+        domain: String,
+        /// Description of the fetch failure
+        reason: String,
+    },
 }
 
 impl fmt::Display for SkillSecurityError {
@@ -207,6 +231,24 @@ impl fmt::Display for SkillSecurityError {
             Self::CacheError { message } => {
                 write!(f, "cache error: {message}")
             }
+            Self::ArchiveDownloadFailed { agent_uri, reason } => {
+                write!(
+                    f,
+                    "failed to download skill archive for '{agent_uri}': {reason}"
+                )
+            }
+            Self::ArchiveParseError { agent_uri, reason } => {
+                write!(
+                    f,
+                    "failed to parse skill archive for '{agent_uri}': {reason}"
+                )
+            }
+            Self::TrustRootFetchFailed { domain, reason } => {
+                write!(
+                    f,
+                    "failed to fetch trust root keys for '{domain}': {reason}"
+                )
+            }
         }
     }
 }
@@ -282,5 +324,38 @@ mod tests {
     fn test_error_implements_std_error() {
         fn assert_error<E: std::error::Error>() {}
         assert_error::<SkillSecurityError>();
+    }
+
+    #[test]
+    fn test_archive_download_failed_display() {
+        let err = SkillSecurityError::ArchiveDownloadFailed {
+            agent_uri: "agent://talonhub.io/skill/test".to_string(),
+            reason: "connection refused".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("agent://talonhub.io/skill/test"));
+        assert!(msg.contains("connection refused"));
+    }
+
+    #[test]
+    fn test_archive_parse_error_display() {
+        let err = SkillSecurityError::ArchiveParseError {
+            agent_uri: "agent://talonhub.io/skill/test".to_string(),
+            reason: "invalid UTF-8".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("agent://talonhub.io/skill/test"));
+        assert!(msg.contains("invalid UTF-8"));
+    }
+
+    #[test]
+    fn test_trust_root_fetch_failed_display() {
+        let err = SkillSecurityError::TrustRootFetchFailed {
+            domain: "talonhub.io".to_string(),
+            reason: "timeout".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("talonhub.io"));
+        assert!(msg.contains("timeout"));
     }
 }

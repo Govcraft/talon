@@ -8,14 +8,18 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
-use acton_ai::skills::{LoadedSkill, SkillRegistry};
+use acton_ai::skills::{LoadedSkill, SkillInfo, SkillRegistry};
 use agent_uri::AgentUri;
 use agent_uri_attestation::{AttestationClaims, Verifier, VerifyingKey};
+use base64::Engine;
 use omnibor::hash_algorithm::Sha256;
 use omnibor::ArtifactId;
 use omnibor::ArtifactIdBuilder;
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::skills::cache::{AttestationCache, AttestationCacheConfig};
@@ -23,6 +27,7 @@ use crate::skills::capabilities::{
     find_missing_capabilities, parse_capabilities, tools_to_capabilities, CapabilityPath,
 };
 use crate::skills::error::{SkillSecurityError, SkillSecurityResult};
+use crate::skills::integrity::compute_artifact_id;
 use crate::skills::registry_client::{RegistryClient, RegistryClientConfig};
 use crate::skills::verified::{SkillId, VerifiedSkill};
 use crate::trust::{TrustTier, TrustTierManager};
@@ -76,8 +81,8 @@ impl Default for SecureSkillRegistryConfig {
 /// - Capability-based access control
 pub struct SecureSkillRegistry {
     // Note: Manual Debug impl to avoid exposing sensitive verifier details
-    /// The underlying skill registry from acton-ai
-    inner: SkillRegistry,
+    /// The underlying skill registry from acton-ai, shared via Arc<RwLock>
+    inner: Arc<RwLock<SkillRegistry>>,
 
     /// Attestation verifier
     verifier: Verifier,
@@ -128,7 +133,7 @@ impl SecureSkillRegistry {
         let trust_manager = TrustTierManager::new(config.max_trust_tier);
 
         Ok(Self {
-            inner: SkillRegistry::new(),
+            inner: Arc::new(RwLock::new(SkillRegistry::new())),
             verifier: Verifier::new(),
             cache,
             registry_client,
@@ -136,6 +141,48 @@ impl SecureSkillRegistry {
             verified_skills: HashMap::new(),
             config,
         })
+    }
+
+    /// Create a new secure skill registry using a shared inner registry
+    ///
+    /// This allows multiple components to share the same underlying
+    /// `SkillRegistry` instance while maintaining independent security
+    /// verification state.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration for the secure registry
+    /// * `inner` - Shared reference to the underlying skill registry
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the registry client cannot be initialized.
+    pub fn with_shared_registry(
+        config: SecureSkillRegistryConfig,
+        inner: Arc<RwLock<SkillRegistry>>,
+    ) -> SkillSecurityResult<Self> {
+        let cache = AttestationCache::with_config(config.cache_config.clone());
+        let registry_client = RegistryClient::with_config(config.registry_config.clone())?;
+        let trust_manager = TrustTierManager::new(config.max_trust_tier);
+
+        Ok(Self {
+            inner,
+            verifier: Verifier::new(),
+            cache,
+            registry_client,
+            trust_manager,
+            verified_skills: HashMap::new(),
+            config,
+        })
+    }
+
+    /// Get a clone of the shared inner registry handle
+    ///
+    /// This returns an `Arc<RwLock<SkillRegistry>>` that can be shared
+    /// with other components that need access to the underlying registry.
+    #[must_use]
+    pub fn inner_registry(&self) -> Arc<RwLock<SkillRegistry>> {
+        Arc::clone(&self.inner)
     }
 
     /// Add a trusted verifying key for a trust root
@@ -217,12 +264,207 @@ impl SecureSkillRegistry {
         let skill_id = verified.id.clone();
 
         // Store in registry
-        self.inner.add(skill);
+        {
+            let mut guard = self.inner.write().await;
+            guard.add(skill);
+        }
         self.verified_skills.insert(skill_name.clone(), verified);
 
         info!(skill = %skill_name, trust_tier = %trust_tier, "skill loaded and verified");
 
         Ok(skill_id)
+    }
+
+    /// Load a skill from the TalonHub registry by agent URI
+    ///
+    /// This method:
+    /// 1. Downloads the skill archive from the hub
+    /// 2. Parses the archive as a skill
+    /// 3. Fetches and verifies the attestation
+    /// 4. Computes OmniBOR integrity hash
+    /// 5. Determines capabilities and trust tier
+    /// 6. Stores the verified skill
+    ///
+    /// # Arguments
+    ///
+    /// * `agent_uri` - The agent URI identifying the skill in the hub
+    ///
+    /// # Errors
+    ///
+    /// Returns error if download, parsing, or verification fails.
+    pub async fn load_from_hub(&mut self, agent_uri: &str) -> SkillSecurityResult<()> {
+        info!(agent_uri = %agent_uri, "loading skill from hub");
+
+        // 1. Download skill archive
+        let archive_bytes = self
+            .registry_client
+            .download_skill_archive(agent_uri)
+            .await?;
+
+        // 2. Parse archive as UTF-8
+        let archive_str =
+            String::from_utf8(archive_bytes.clone()).map_err(|e| {
+                SkillSecurityError::ArchiveParseError {
+                    agent_uri: agent_uri.to_string(),
+                    reason: format!("invalid UTF-8: {e}"),
+                }
+            })?;
+
+        // 3. Parse skill using agent-skills crate
+        let skill = agent_skills::Skill::parse(&archive_str).map_err(|e| {
+            SkillSecurityError::ArchiveParseError {
+                agent_uri: agent_uri.to_string(),
+                reason: e.to_string(),
+            }
+        })?;
+
+        // 4. Convert to LoadedSkill
+        let loaded_skill = LoadedSkill {
+            info: SkillInfo {
+                name: skill.name().as_str().to_string(),
+                description: skill.description().as_str().to_string(),
+                path: PathBuf::from(agent_uri),
+                tags: skill
+                    .frontmatter()
+                    .metadata()
+                    .and_then(|m| m.get("tags"))
+                    .map(|t| t.split(',').map(|s| s.trim().to_string()).collect())
+                    .unwrap_or_default(),
+            },
+            content: skill.body().to_string(),
+            triggers: skill
+                .frontmatter()
+                .metadata()
+                .and_then(|m| m.get("triggers"))
+                .map(|t| t.split(',').map(|s| s.trim().to_string()).collect())
+                .unwrap_or_default(),
+            enabled_by_default: skill
+                .frontmatter()
+                .metadata()
+                .and_then(|m| m.get("enabled"))
+                .is_some_and(|v| v == "true"),
+        };
+
+        let skill_name = loaded_skill.info.name.clone();
+
+        // 5. Fetch attestation token
+        let attestation_response = self
+            .registry_client
+            .fetch_attestation(agent_uri)
+            .await?;
+
+        // 6. Verify attestation
+        let claims = self
+            .verifier
+            .verify(&attestation_response.token)
+            .map_err(|e| SkillSecurityError::AttestationVerification {
+                skill_name: skill_name.clone(),
+                reason: e.to_string(),
+            })?;
+
+        // 7. Compute OmniBOR for integrity
+        let omnibor_id = compute_artifact_id(&archive_bytes);
+
+        // 8. Parse agent URI
+        let parsed_uri =
+            AgentUri::parse(agent_uri).map_err(|e| SkillSecurityError::InvalidAgentUri {
+                uri: agent_uri.to_string(),
+                reason: e.to_string(),
+            })?;
+
+        // 9. Determine capabilities and trust tier
+        let capabilities = parse_capabilities(&claims.capabilities);
+        let trust_tier = self.determine_trust_tier(&capabilities)?;
+
+        // 10. Create VerifiedSkill
+        let verified = VerifiedSkill::new(
+            loaded_skill.clone(),
+            parsed_uri,
+            claims,
+            omnibor_id,
+            capabilities,
+            trust_tier,
+        );
+
+        // 11. Store in verified_skills map
+        self.verified_skills
+            .insert(agent_uri.to_string(), verified);
+
+        // 12. Add to inner SkillRegistry for tool discovery
+        {
+            let mut guard = self.inner.write().await;
+            guard.add(loaded_skill);
+        }
+
+        info!(
+            skill = %skill_name,
+            trust_tier = %trust_tier,
+            "skill loaded from hub and verified"
+        );
+
+        Ok(())
+    }
+
+    /// Fetch trust root keys from a domain and add them to the verifier
+    ///
+    /// This method fetches the public keys for a trust root domain from
+    /// the registry and adds them to the verifier for attestation validation.
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The trust root domain (e.g., "talonhub.io")
+    ///
+    /// # Errors
+    ///
+    /// Returns error if key fetch, decoding, or validation fails.
+    pub async fn fetch_and_add_trust_root(
+        &mut self,
+        domain: &str,
+    ) -> SkillSecurityResult<()> {
+        info!(domain = %domain, "fetching trust root keys");
+
+        let keys_response = self
+            .registry_client
+            .fetch_trust_root_keys(domain)
+            .await?;
+
+        for key_info in &keys_response.keys {
+            let key_bytes = base64::engine::general_purpose::STANDARD
+                .decode(&key_info.public_key)
+                .map_err(|e| SkillSecurityError::TrustRootFetchFailed {
+                    domain: domain.to_string(),
+                    reason: format!("invalid base64 key: {e}"),
+                })?;
+
+            if key_bytes.len() != 32 {
+                return Err(SkillSecurityError::TrustRootFetchFailed {
+                    domain: domain.to_string(),
+                    reason: format!(
+                        "key must be 32 bytes, got {}",
+                        key_bytes.len()
+                    ),
+                });
+            }
+
+            let mut key_array = [0u8; 32];
+            key_array.copy_from_slice(&key_bytes);
+
+            let verifying_key = VerifyingKey::from_bytes(&key_array).map_err(|e| {
+                SkillSecurityError::TrustRootFetchFailed {
+                    domain: domain.to_string(),
+                    reason: format!("invalid Ed25519 key: {e}"),
+                }
+            })?;
+
+            self.verifier.add_trusted_root(domain, verifying_key);
+            info!(
+                domain = %domain,
+                kid = %key_info.kid,
+                "added trust root key"
+            );
+        }
+
+        Ok(())
     }
 
     /// Get a verified skill by name
@@ -307,8 +549,11 @@ impl SecureSkillRegistry {
     /// # Returns
     ///
     /// The removed verified skill if it existed.
-    pub fn remove(&mut self, name: &str) -> Option<VerifiedSkill> {
-        self.inner.remove(name);
+    pub async fn remove(&mut self, name: &str) -> Option<VerifiedSkill> {
+        {
+            let mut guard = self.inner.write().await;
+            guard.remove(name);
+        }
         self.verified_skills.remove(name)
     }
 
@@ -335,9 +580,9 @@ impl SecureSkillRegistry {
         &self.config
     }
 
-    /// Get mutable access to the underlying skill registry
+    /// Get access to the shared underlying skill registry
     #[must_use]
-    pub fn inner(&self) -> &SkillRegistry {
+    pub fn inner(&self) -> &Arc<RwLock<SkillRegistry>> {
         &self.inner
     }
 
@@ -608,6 +853,31 @@ mod tests {
         let registry = registry.unwrap();
         assert!(!registry.config().require_attestation);
         assert!(!registry.config().verify_integrity);
+    }
+
+    #[test]
+    fn test_registry_with_shared_inner() {
+        let shared_inner = Arc::new(RwLock::new(SkillRegistry::new()));
+        let config = SecureSkillRegistryConfig::default();
+
+        let registry = SecureSkillRegistry::with_shared_registry(config, shared_inner.clone());
+        assert!(registry.is_ok());
+
+        let registry = registry.unwrap();
+        assert!(registry.is_empty());
+
+        // Verify it returns the same Arc
+        assert!(Arc::ptr_eq(&registry.inner_registry(), &shared_inner));
+    }
+
+    #[test]
+    fn test_inner_registry_accessor() {
+        let registry = SecureSkillRegistry::new().unwrap();
+        let inner1 = registry.inner_registry();
+        let inner2 = registry.inner_registry();
+
+        // Both should point to the same underlying data
+        assert!(Arc::ptr_eq(&inner1, &inner2));
     }
 
     #[test]
