@@ -123,7 +123,7 @@ impl<'de> Deserialize<'de> for ConversationId {
 }
 
 /// Channel identifier (e.g., "terminal", "telegram")
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ChannelId(String);
 
 impl ChannelId {

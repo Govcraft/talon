@@ -5,9 +5,9 @@
 
 use std::sync::Arc;
 
+use crate::skills::CapabilityPath;
 use crate::skills::secure_executor::SecureToolExecutor;
 use crate::skills::verified::{SkillId, VerifiedSkill};
-use crate::skills::CapabilityPath;
 
 /// A tool that has been bridged from a verified skill
 ///
@@ -130,13 +130,9 @@ impl ToolBridge {
         for capability in &skill.capabilities {
             if let Some(bridged_tools) = capability_to_tools(capability) {
                 for (tool_name, description) in bridged_tools {
-                    let tool = BridgedTool::new(
-                        tool_name,
-                        description,
-                        skill.id.clone(),
-                        skill.name(),
-                    )
-                    .with_capability(capability.clone());
+                    let tool =
+                        BridgedTool::new(tool_name, description, skill.id.clone(), skill.name())
+                            .with_capability(capability.clone());
 
                     tools.push(tool);
                 }
@@ -234,12 +230,7 @@ mod tests {
 
     #[test]
     fn test_bridged_tool_creation() {
-        let tool = BridgedTool::new(
-            "Read",
-            "Read file contents",
-            SkillId::new(),
-            "test-skill",
-        );
+        let tool = BridgedTool::new("Read", "Read file contents", SkillId::new(), "test-skill");
 
         assert_eq!(tool.name(), "Read");
         assert_eq!(tool.description(), "Read file contents");
@@ -254,7 +245,9 @@ mod tests {
 
         assert!(tool.required_capability().is_some());
         assert_eq!(
-            tool.required_capability().expect("should have capability").as_str(),
+            tool.required_capability()
+                .expect("should have capability")
+                .as_str(),
             "file/read"
         );
     }

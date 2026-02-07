@@ -2,7 +2,8 @@
 //!
 //! Provides the main runtime that initializes all core components:
 //! - Actor system via acton-reactive
-//! - Router actor for message routing
+//! - MemoryStore actor for persistence (libSQL)
+//! - Router actor for message routing with per-conversation actors
 //! - Secure skill registry
 //! - IPC listener for channel communication
 
@@ -12,13 +13,13 @@ use std::time::Duration;
 
 use acton_ai::prelude::*;
 use acton_ai::skills::SkillRegistry;
-use acton_reactive::prelude::{ActonApp, ActorRuntime};
+use acton_reactive::prelude::{ActonApp, ActorHandle, ActorRuntime};
 use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::error::{TalonError, TalonResult};
 use crate::ipc::{DefaultIpcHandler, IpcServer, IpcServerConfig, TokenAuthenticator};
-use crate::router::{Router, RouterConfig};
+use crate::router::{RouterConfig, SetupRouter, spawn_router};
 use crate::skills::{SecureSkillRegistry, SecureSkillRegistryConfig};
 
 /// Configuration for the Talon runtime
@@ -26,6 +27,8 @@ use crate::skills::{SecureSkillRegistry, SecureSkillRegistryConfig};
 pub struct RuntimeConfig {
     /// Path for the IPC Unix socket
     pub ipc_socket_path: PathBuf,
+    /// Path for the persistence database
+    pub db_path: PathBuf,
     /// Maximum concurrent conversations
     pub max_conversations: usize,
     /// Conversation timeout duration
@@ -54,8 +57,15 @@ impl Default for RuntimeConfig {
             .join("talon")
             .join("talon.sock");
 
+        // Default database path following XDG conventions
+        let db_path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join("talon")
+            .join("talon.db");
+
         Self {
             ipc_socket_path: socket_path,
+            db_path,
             max_conversations: 1000,
             conversation_timeout: Duration::from_secs(3600),
             ollama_host: "http://localhost:11434/v1".to_string(),
@@ -88,18 +98,23 @@ pub struct TalonRuntime {
     skill_registry: Arc<RwLock<SecureSkillRegistry>>,
     /// ActonAI runtime with built-in tools
     acton_ai: Arc<ActonAI>,
+    /// Handle to the Router actor
+    router_handle: ActorHandle,
+    /// Handle to the MemoryStore actor
+    store_handle: ActorHandle,
     /// IPC message handler
     ipc_handler: Arc<DefaultIpcHandler>,
     /// IPC server
     ipc_server: Option<Arc<IpcServer>>,
     /// Runtime configuration
     config: RuntimeConfig,
-    /// Whether the router has been started
-    router_started: bool,
 }
 
 impl TalonRuntime {
     /// Create and initialize a new Talon runtime
+    ///
+    /// This spawns the MemoryStore and Router actors, initializes the
+    /// database for persistence, and wires everything together.
     ///
     /// # Arguments
     ///
@@ -111,6 +126,7 @@ impl TalonRuntime {
     pub async fn new(config: RuntimeConfig) -> TalonResult<Self> {
         info!(
             socket_path = %config.ipc_socket_path.display(),
+            db_path = %config.db_path.display(),
             max_conversations = config.max_conversations,
             ollama_host = %config.ollama_host,
             "initializing Talon runtime"
@@ -120,7 +136,7 @@ impl TalonRuntime {
         let mut runtime = ActonApp::launch_async().await;
 
         // Create the shared inner registry that both SecureSkillRegistry
-        // and DefaultIpcHandler will reference
+        // and the Router (via skill tools) will reference
         let shared_registry = Arc::new(RwLock::new(SkillRegistry::new()));
 
         // Create the secure skill registry with the shared inner
@@ -153,24 +169,50 @@ impl TalonRuntime {
             "ActonAI runtime created with built-in tools"
         );
 
-        // Create the IPC handler with ActonAI and shared skill registry
-        let authenticator = TokenAuthenticator::new(&config.secret_key);
-        let ipc_handler = Arc::new(DefaultIpcHandler::with_acton_ai_and_skills(
-            authenticator,
-            Arc::clone(&acton_ai),
-            Arc::clone(&shared_registry),
-        ));
+        // Spawn MemoryStore actor for persistence
+        let store_handle = MemoryStore::spawn(&mut runtime).await;
 
-        // Create and start the router actor
-        let _router_config = RouterConfig {
+        // Ensure the database directory exists
+        if let Some(parent) = config.db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Initialize the database
+        store_handle
+            .send(InitMemoryStore {
+                config: PersistenceConfig::new(config.db_path.to_string_lossy()),
+            })
+            .await;
+
+        info!(
+            db_path = %config.db_path.display(),
+            "MemoryStore actor spawned and initialized"
+        );
+
+        // Spawn Router actor with configuration
+        let router_config = RouterConfig {
             max_conversations: config.max_conversations,
             conversation_timeout: config.conversation_timeout,
         };
+        let router_handle = spawn_router(&mut runtime, router_config).await;
 
-        let router_builder = runtime.new_actor::<Router>();
+        // Initialize the router with shared resources
+        router_handle
+            .send(SetupRouter {
+                acton_ai: Arc::clone(&acton_ai),
+                store: store_handle.clone(),
+                skill_registry: Arc::clone(&skill_registry),
+            })
+            .await;
 
-        // Start the router
-        let _router_handle = router_builder.start().await;
+        info!("Router actor spawned and initialized");
+
+        // Create the IPC handler with Router (not ActonAI directly)
+        let authenticator = TokenAuthenticator::new(&config.secret_key);
+        let ipc_handler = Arc::new(DefaultIpcHandler::with_router(
+            authenticator,
+            router_handle.clone(),
+        ));
 
         info!("Talon runtime initialized successfully");
 
@@ -178,17 +220,18 @@ impl TalonRuntime {
             runtime,
             skill_registry,
             acton_ai,
+            router_handle,
+            store_handle,
             ipc_handler,
             ipc_server: None,
             config,
-            router_started: true,
         })
     }
 
     /// Check if the router is started
     #[must_use]
     pub fn is_router_started(&self) -> bool {
-        self.router_started
+        true // Router is always started during new()
     }
 
     /// Get the skill registry
@@ -201,6 +244,18 @@ impl TalonRuntime {
     #[must_use]
     pub fn acton_ai(&self) -> &Arc<ActonAI> {
         &self.acton_ai
+    }
+
+    /// Get the router handle
+    #[must_use]
+    pub fn router_handle(&self) -> &ActorHandle {
+        &self.router_handle
+    }
+
+    /// Get the MemoryStore handle
+    #[must_use]
+    pub fn store_handle(&self) -> &ActorHandle {
+        &self.store_handle
     }
 
     /// Get the IPC handler
@@ -297,7 +352,10 @@ impl TalonRuntime {
     ///
     /// This is useful for the CLI to generate tokens for new channels.
     #[must_use]
-    pub fn issue_channel_token(&self, channel_id: &crate::types::ChannelId) -> crate::ipc::AuthToken {
+    pub fn issue_channel_token(
+        &self,
+        channel_id: &crate::types::ChannelId,
+    ) -> crate::ipc::AuthToken {
         self.ipc_handler.issue_token(channel_id)
     }
 
@@ -314,7 +372,7 @@ impl TalonRuntime {
             server.stop().await?;
         }
 
-        // Shutdown the actor runtime
+        // Shutdown the actor runtime (stops Router, MemoryStore, ConversationActors)
         self.runtime
             .shutdown_all()
             .await
@@ -349,6 +407,13 @@ impl RuntimeConfigBuilder {
     #[must_use]
     pub fn ipc_socket_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.config.ipc_socket_path = path.into();
+        self
+    }
+
+    /// Set the database path for persistence
+    #[must_use]
+    pub fn db_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.config.db_path = path.into();
         self
     }
 
@@ -432,6 +497,7 @@ mod tests {
         assert_eq!(config.max_conversations, 1000);
         assert_eq!(config.conversation_timeout, Duration::from_secs(3600));
         assert_eq!(config.ollama_host, "http://localhost:11434/v1");
+        assert!(config.db_path.to_string_lossy().contains("talon.db"));
     }
 
     #[test]
@@ -457,6 +523,15 @@ mod tests {
             config.ipc_socket_path,
             PathBuf::from("/custom/path/talon.sock")
         );
+    }
+
+    #[test]
+    fn test_config_builder_db_path() {
+        let config = RuntimeConfigBuilder::new()
+            .db_path("/custom/path/talon.db")
+            .build();
+
+        assert_eq!(config.db_path, PathBuf::from("/custom/path/talon.db"));
     }
 
     #[test]
@@ -493,6 +568,7 @@ mod tests {
     async fn test_runtime_creation() {
         let config = RuntimeConfigBuilder::new()
             .ipc_socket_path("/tmp/talon-test.sock")
+            .db_path("/tmp/talon-test.db")
             .max_conversations(10)
             .build();
 
@@ -506,5 +582,8 @@ mod tests {
         // Clean shutdown
         let shutdown_result = runtime.shutdown().await;
         assert!(shutdown_result.is_ok());
+
+        // Clean up test db
+        let _ = std::fs::remove_file("/tmp/talon-test.db");
     }
 }

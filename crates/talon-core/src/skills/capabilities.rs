@@ -174,11 +174,7 @@ fn parse_bash_scope(tool_name: &str) -> Option<&str> {
     let colon_pos = inner.find(':')?;
     let scope = &inner[..colon_pos];
 
-    if scope.is_empty() {
-        None
-    } else {
-        Some(scope)
-    }
+    if scope.is_empty() { None } else { Some(scope) }
 }
 
 /// Map multiple tool names to capability paths

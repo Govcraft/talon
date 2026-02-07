@@ -72,15 +72,18 @@ async fn add_telegram(token: Option<String>) -> TalonResult<()> {
         Some(t) => t,
         None => {
             print!("Enter Telegram bot token: ");
-            io::stdout().flush().map_err(|e| talon_core::TalonError::Io {
-                message: e.to_string(),
-            })?;
+            io::stdout()
+                .flush()
+                .map_err(|e| talon_core::TalonError::Io {
+                    message: e.to_string(),
+                })?;
             let mut token = String::new();
-            io::stdin().lock().read_line(&mut token).map_err(|e| {
-                talon_core::TalonError::Io {
+            io::stdin()
+                .lock()
+                .read_line(&mut token)
+                .map_err(|e| talon_core::TalonError::Io {
                     message: format!("failed to read token: {e}"),
-                }
-            })?;
+                })?;
             token.trim().to_string()
         }
     };

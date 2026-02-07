@@ -4,12 +4,12 @@
 //! channel binaries and dispatches messages to handlers.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use dashmap::DashMap;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{UnixListener, UnixStream};
@@ -17,8 +17,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::error::{TalonError, TalonResult};
-use crate::ipc::messages::{ChannelToCore, CoreToChannel};
 use crate::ipc::IpcMessageHandler;
+use crate::ipc::messages::{ChannelToCore, CoreToChannel};
 use crate::types::ChannelId;
 
 /// Maximum message size (16 MiB)
@@ -204,10 +204,13 @@ impl IpcServer {
                 message: "channel not connected".to_string(),
             })?;
 
-        let handle = self.connections.get(&conn_id).ok_or_else(|| TalonError::Channel {
-            channel: channel_id.to_string(),
-            message: "connection not found".to_string(),
-        })?;
+        let handle = self
+            .connections
+            .get(&conn_id)
+            .ok_or_else(|| TalonError::Channel {
+                channel: channel_id.to_string(),
+                message: "connection not found".to_string(),
+            })?;
 
         handle
             .sender

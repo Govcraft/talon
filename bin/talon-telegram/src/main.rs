@@ -23,8 +23,8 @@ use std::sync::Arc;
 use talon_channels::ipc::{IpcClient, IpcClientConfig};
 use talon_channels::{Channel, InboundMessage, TelegramChannel};
 use talon_core::{ChannelId, TalonError, TalonResult};
-use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::{mpsc, Notify};
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::{Notify, mpsc};
 use tracing_subscriber::EnvFilter;
 
 /// Load IPC auth token from systemd credentials
@@ -71,7 +71,8 @@ async fn main() -> TalonResult<()> {
 
     tokio::spawn(async move {
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
-        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
 
         tokio::select! {
             _ = sigint.recv() => {

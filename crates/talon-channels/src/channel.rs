@@ -61,11 +61,7 @@ pub struct InboundMessage {
 impl InboundMessage {
     /// Create a new inbound message
     #[must_use]
-    pub fn new(
-        conversation_id: ConversationId,
-        sender: SenderId,
-        content: MessageContent,
-    ) -> Self {
+    pub fn new(conversation_id: ConversationId, sender: SenderId, content: MessageContent) -> Self {
         Self {
             conversation_id,
             sender,

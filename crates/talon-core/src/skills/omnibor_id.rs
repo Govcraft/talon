@@ -4,8 +4,8 @@
 //! `gitoid:blob:sha256:<64-hex-chars>`. Supports conversion to/from
 //! the `omnibor` crate's `ArtifactId<Sha256>` type.
 
-use omnibor::hash_algorithm::Sha256;
 use omnibor::ArtifactId;
+use omnibor::hash_algorithm::Sha256;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
@@ -163,7 +163,10 @@ impl fmt::Display for InvalidOmniborIdReason {
                 position,
                 character,
             } => {
-                write!(f, "invalid hex character '{character}' at position {position}")
+                write!(
+                    f,
+                    "invalid hex character '{character}' at position {position}"
+                )
             }
             Self::ParseError(msg) => write!(f, "parse error: {msg}"),
         }

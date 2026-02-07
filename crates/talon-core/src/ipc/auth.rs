@@ -3,7 +3,7 @@
 //! Provides secure token-based authentication for channel connections
 //! to the core daemon over Unix Domain Sockets.
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
@@ -181,8 +181,7 @@ impl TokenAuthenticator {
 
         // Serialize payload to JSON
         // This is safe because TokenPayload only contains String and i64
-        let payload_json =
-            serde_json::to_string(&payload).unwrap_or_else(|_| String::from("{}"));
+        let payload_json = serde_json::to_string(&payload).unwrap_or_else(|_| String::from("{}"));
         let payload_b64 = URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
 
         // Sign the payload
@@ -216,11 +215,11 @@ impl TokenAuthenticator {
 
         // Verify signature first
         let expected_signature = self.sign(payload_b64.as_bytes());
-        let provided_signature = URL_SAFE_NO_PAD
-            .decode(signature_b64)
-            .map_err(|e| TalonError::AuthenticationFailed {
+        let provided_signature = URL_SAFE_NO_PAD.decode(signature_b64).map_err(|e| {
+            TalonError::AuthenticationFailed {
                 reason: format!("invalid signature encoding: {e}"),
-            })?;
+            }
+        })?;
 
         if !constant_time_compare(&expected_signature, &provided_signature) {
             return Err(TalonError::AuthenticationFailed {
@@ -236,10 +235,11 @@ impl TokenAuthenticator {
                     reason: format!("invalid payload encoding: {e}"),
                 })?;
 
-        let payload: TokenPayload =
-            serde_json::from_slice(&payload_bytes).map_err(|e| TalonError::AuthenticationFailed {
+        let payload: TokenPayload = serde_json::from_slice(&payload_bytes).map_err(|e| {
+            TalonError::AuthenticationFailed {
                 reason: format!("invalid payload format: {e}"),
-            })?;
+            }
+        })?;
 
         // Parse timestamps
         let issued_at = DateTime::from_timestamp(payload.issued_at, 0).ok_or_else(|| {
@@ -256,7 +256,9 @@ impl TokenAuthenticator {
 
         // Check expiration
         if Utc::now() >= expires_at {
-            return Err(TalonError::TokenExpired { expired_at: expires_at });
+            return Err(TalonError::TokenExpired {
+                expired_at: expires_at,
+            });
         }
 
         Ok(ValidatedToken {

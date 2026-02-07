@@ -8,14 +8,14 @@ use agent_uri::AgentUri;
 use agent_uri_attestation::AttestationClaims;
 use chrono::{DateTime, Utc};
 use mti::prelude::*;
-use omnibor::hash_algorithm::Sha256;
 use omnibor::ArtifactId;
+use omnibor::hash_algorithm::Sha256;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 
-use crate::skills::error::{SkillSecurityError, SkillSecurityResult};
 use crate::skills::CapabilityPath;
+use crate::skills::error::{SkillSecurityError, SkillSecurityResult};
 use crate::trust::TrustTier;
 
 /// Unique identifier for a skill in the registry
@@ -313,29 +313,39 @@ impl VerifiedSkillBuilder {
     ///
     /// Returns error if required fields are not set.
     pub fn build(self) -> SkillSecurityResult<VerifiedSkill> {
-        let skill = self.skill.ok_or_else(|| SkillSecurityError::SkillLoadError {
-            skill_name: "unknown".to_string(),
-            reason: "skill is required for VerifiedSkill".to_string(),
-        })?;
+        let skill = self
+            .skill
+            .ok_or_else(|| SkillSecurityError::SkillLoadError {
+                skill_name: "unknown".to_string(),
+                reason: "skill is required for VerifiedSkill".to_string(),
+            })?;
 
-        let agent_uri = self.agent_uri.ok_or_else(|| SkillSecurityError::InvalidAgentUri {
-            uri: "none".to_string(),
-            reason: "agent_uri is required for VerifiedSkill".to_string(),
-        })?;
+        let agent_uri = self
+            .agent_uri
+            .ok_or_else(|| SkillSecurityError::InvalidAgentUri {
+                uri: "none".to_string(),
+                reason: "agent_uri is required for VerifiedSkill".to_string(),
+            })?;
 
-        let attestation = self.attestation.ok_or_else(|| SkillSecurityError::AttestationNotFound {
-            skill_name: skill.name().to_string(),
-        })?;
+        let attestation =
+            self.attestation
+                .ok_or_else(|| SkillSecurityError::AttestationNotFound {
+                    skill_name: skill.name().to_string(),
+                })?;
 
-        let omnibor_id = self.omnibor_id.ok_or_else(|| SkillSecurityError::OmniborError {
-            message: "omnibor_id is required for VerifiedSkill".to_string(),
-        })?;
+        let omnibor_id = self
+            .omnibor_id
+            .ok_or_else(|| SkillSecurityError::OmniborError {
+                message: "omnibor_id is required for VerifiedSkill".to_string(),
+            })?;
 
-        let trust_tier = self.trust_tier.ok_or_else(|| SkillSecurityError::TrustTierViolation {
-            skill_name: skill.name().to_string(),
-            required_tier: 0,
-            actual_tier: 0,
-        })?;
+        let trust_tier = self
+            .trust_tier
+            .ok_or_else(|| SkillSecurityError::TrustTierViolation {
+                skill_name: skill.name().to_string(),
+                required_tier: 0,
+                actual_tier: 0,
+            })?;
 
         Ok(VerifiedSkill::new(
             skill,

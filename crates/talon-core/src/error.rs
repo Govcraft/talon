@@ -128,13 +128,19 @@ impl fmt::Display for TalonError {
             }
             Self::Attestation { message } => write!(f, "attestation error: {message}"),
             Self::IntegrityCheck { expected, actual } => {
-                write!(f, "integrity check failed: expected {expected}, got {actual}")
+                write!(
+                    f,
+                    "integrity check failed: expected {expected}, got {actual}"
+                )
             }
             Self::CapabilityDenied { skill, capability } => {
                 write!(f, "capability {capability} denied for skill {skill}")
             }
             Self::TrustTierViolation { required, actual } => {
-                write!(f, "trust tier violation: required {required}, actual {actual}")
+                write!(
+                    f,
+                    "trust tier violation: required {required}, actual {actual}"
+                )
             }
             Self::Actor { message } => write!(f, "actor error: {message}"),
             Self::Channel { channel, message } => {

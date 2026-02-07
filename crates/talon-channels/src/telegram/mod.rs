@@ -32,4 +32,4 @@ mod streaming;
 pub use channel::TelegramChannel;
 pub use config::{TelegramConfig, TelegramConfigError};
 pub use mapping::IdMapper;
-pub use streaming::{split_message, StreamingManager, TELEGRAM_MAX_MESSAGE_LENGTH};
+pub use streaming::{StreamingManager, TELEGRAM_MAX_MESSAGE_LENGTH, split_message};

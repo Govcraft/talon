@@ -5,9 +5,9 @@
 
 use std::path::Path;
 
-use omnibor::hash_algorithm::Sha256;
 use omnibor::ArtifactId;
 use omnibor::ArtifactIdBuilder;
+use omnibor::hash_algorithm::Sha256;
 
 use crate::skills::error::{SkillSecurityError, SkillSecurityResult};
 use crate::skills::omnibor_id::OmniborId;

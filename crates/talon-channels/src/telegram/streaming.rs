@@ -89,11 +89,11 @@ impl StreamingManager {
         }
 
         // No existing stream - create a new message
-        let chat_id = id_mapper.get_chat_id(conversation_id).ok_or_else(|| {
-            ChannelError::Send {
+        let chat_id = id_mapper
+            .get_chat_id(conversation_id)
+            .ok_or_else(|| ChannelError::Send {
                 message: format!("no chat mapping for conversation {}", conversation_id),
-            }
-        })?;
+            })?;
 
         // Send initial message with token
         let initial_content = format!("{token}{STREAMING_INDICATOR}");
@@ -112,7 +112,6 @@ impl StreamingManager {
         self.streams.insert(conv_key, state);
         Ok(())
     }
-
 
     /// Finalize a stream, sending the complete message without indicator
     ///

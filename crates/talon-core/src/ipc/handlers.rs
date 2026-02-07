@@ -1,21 +1,20 @@
 //! IPC message handlers
 //!
 //! Handles incoming messages from channels, including authentication
-//! and message routing.
+//! and message routing. User messages are delegated to the Router actor
+//! which manages per-conversation actors for LLM processing.
 
 use async_trait::async_trait;
 use dashmap::DashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
-use acton_ai::prelude::*;
-use acton_ai::tools::builtins::{ActivateSkillTool, ListSkillsTool};
-use acton_ai::tools::ToolExecutorTrait;
-use tokio::sync::RwLock;
+use acton_reactive::prelude::{ActorHandle, ActorHandleInterface};
 
 use crate::error::{TalonError, TalonResult};
 use crate::ipc::auth::{AuthToken, TokenAuthenticator, ValidatedToken};
 use crate::ipc::messages::{ChannelToCore, CoreToChannel};
+use crate::router::RouteMessage;
 use crate::types::ChannelId;
 
 /// Handler for IPC messages from channels
@@ -42,22 +41,19 @@ pub trait IpcMessageHandler: Send + Sync {
 
 /// Default IPC message handler implementation
 ///
-/// Handles authentication, LLM processing, and message routing.
+/// Handles authentication and delegates user messages to the Router actor.
+/// The Router spawns per-conversation actors that handle LLM interaction.
 pub struct DefaultIpcHandler {
     /// Token authenticator
     authenticator: TokenAuthenticator,
     /// Map of authenticated channels to their validated tokens
     authenticated_channels: Arc<DashMap<String, ValidatedToken>>,
-    /// ActonAI runtime for processing messages (with built-in tools)
-    acton_ai: Option<Arc<ActonAI>>,
-    /// Conversation histories per conversation ID
-    conversations: Arc<DashMap<String, Vec<Message>>>,
-    /// Shared skill registry for tool discovery and activation
-    skill_registry: Option<Arc<RwLock<SkillRegistry>>>,
+    /// Router actor handle for delegating user messages
+    router_handle: Option<ActorHandle>,
 }
 
 impl DefaultIpcHandler {
-    /// Create a new handler with a token authenticator
+    /// Create a new handler with a token authenticator (no routing, for testing)
     ///
     /// # Arguments
     ///
@@ -67,52 +63,22 @@ impl DefaultIpcHandler {
         Self {
             authenticator,
             authenticated_channels: Arc::new(DashMap::new()),
-            acton_ai: None,
-            conversations: Arc::new(DashMap::new()),
-            skill_registry: None,
+            router_handle: None,
         }
     }
 
-    /// Create a new handler with ActonAI runtime (with built-in tools)
+    /// Create a new handler with a router for delegating user messages
     ///
     /// # Arguments
     ///
     /// * `authenticator` - The token authenticator to use
-    /// * `acton_ai` - The ActonAI runtime with built-in tools enabled
+    /// * `router` - Handle to the Router actor
     #[must_use]
-    pub fn with_acton_ai(authenticator: TokenAuthenticator, acton_ai: Arc<ActonAI>) -> Self {
+    pub fn with_router(authenticator: TokenAuthenticator, router: ActorHandle) -> Self {
         Self {
             authenticator,
             authenticated_channels: Arc::new(DashMap::new()),
-            acton_ai: Some(acton_ai),
-            conversations: Arc::new(DashMap::new()),
-            skill_registry: None,
-        }
-    }
-
-    /// Create a new handler with ActonAI runtime and skill registry
-    ///
-    /// The skill registry enables `list_skills` and `activate_skill` tools
-    /// to be registered on each LLM prompt, allowing the LLM to discover
-    /// and load skills dynamically.
-    ///
-    /// # Arguments
-    ///
-    /// * `authenticator` - The token authenticator to use
-    /// * `acton_ai` - The ActonAI runtime with built-in tools enabled
-    /// * `skill_registry` - Shared skill registry for tool discovery
-    #[must_use]
-    pub fn with_acton_ai_and_skills(
-        authenticator: TokenAuthenticator,
-        acton_ai: Arc<ActonAI>,
-        skill_registry: Arc<RwLock<SkillRegistry>>,
-    ) -> Self {
-        Self {
-            authenticator,
-            authenticated_channels: Arc::new(DashMap::new()),
-            acton_ai: Some(acton_ai),
-            conversations: Arc::new(DashMap::new()),
-            skill_registry: Some(skill_registry),
+            router_handle: Some(router),
         }
     }
 
@@ -120,12 +86,6 @@ impl DefaultIpcHandler {
     #[must_use]
     pub fn authenticated_channels(&self) -> &Arc<DashMap<String, ValidatedToken>> {
         &self.authenticated_channels
-    }
-
-    /// Get a reference to the skill registry, if configured
-    #[must_use]
-    pub fn skill_registry(&self) -> Option<&Arc<RwLock<SkillRegistry>>> {
-        self.skill_registry.as_ref()
     }
 
     /// Issue a token for a channel
@@ -185,7 +145,10 @@ impl DefaultIpcHandler {
     /// Handle registration message
     fn handle_register(&self, channel_id: &ChannelId) -> TalonResult<CoreToChannel> {
         // Check if already authenticated
-        if !self.authenticated_channels.contains_key(channel_id.as_str()) {
+        if !self
+            .authenticated_channels
+            .contains_key(channel_id.as_str())
+        {
             warn!(channel_id = %channel_id, "registration attempt from unauthenticated channel");
             return Err(TalonError::Unauthenticated {
                 channel_id: channel_id.to_string(),
@@ -214,7 +177,10 @@ impl DefaultIpcHandler {
 
     /// Require authentication for a channel operation
     fn require_auth(&self, channel_id: &ChannelId) -> TalonResult<()> {
-        if !self.authenticated_channels.contains_key(channel_id.as_str()) {
+        if !self
+            .authenticated_channels
+            .contains_key(channel_id.as_str())
+        {
             return Err(TalonError::Unauthenticated {
                 channel_id: channel_id.to_string(),
             });
@@ -261,105 +227,41 @@ impl IpcMessageHandler for DefaultIpcHandler {
                     correlation_id = %correlation_id,
                     conversation_id = %conversation_id,
                     channel = %channel_id,
-                    "processing user message"
+                    "delegating user message to router"
                 );
 
-                // Process with ActonAI (includes built-in tools)
-                if let Some(ai) = &self.acton_ai {
-                    // Get or create conversation history
-                    let conv_key = conversation_id.to_string();
-                    let mut history: Vec<Message> = self
-                        .conversations
-                        .get(&conv_key)
-                        .map(|h| h.clone())
-                        .unwrap_or_default();
+                // Delegate to Router actor
+                if let Some(router) = &self.router_handle {
+                    router
+                        .send(RouteMessage {
+                            correlation_id: correlation_id.clone(),
+                            conversation_id: *conversation_id.clone(),
+                            sender: *sender,
+                            content: content.clone(),
+                        })
+                        .await;
 
-                    // Add user message to history
-                    history.push(Message::user(&content));
-
-                    debug!(
-                        history_len = history.len(),
-                        "continuing conversation with history"
-                    );
-
-                    // Build prompt with conversation history (builtins auto-registered
-                    // by continue_with if auto_builtins is enabled on the runtime)
-                    let mut prompt = ai.continue_with(history.clone());
-
-                    // Register skill tools if a registry is available
-                    if let Some(registry) = &self.skill_registry {
-                        // Take a read-lock snapshot to avoid holding the lock
-                        // during LLM processing. SkillRegistry does not derive
-                        // Clone, so we rebuild a snapshot via iteration.
-                        let snapshot: Arc<SkillRegistry> = {
-                            let guard = registry.read().await;
-                            let mut snap = SkillRegistry::new();
-                            for skill in guard.iter() {
-                                snap.add(skill.clone());
-                            }
-                            Arc::new(snap)
-                        };
-
-                        let list_def = ListSkillsTool::config().definition;
-                        let activate_def = ActivateSkillTool::config().definition;
-
-                        let snap_for_list = Arc::clone(&snapshot);
-                        let snap_for_activate = Arc::clone(&snapshot);
-
-                        prompt = prompt
-                            .with_tool(list_def, move |args| {
-                                let tool = ListSkillsTool::new(Arc::clone(&snap_for_list));
-                                async move { tool.execute(args).await }
-                            })
-                            .with_tool(activate_def, move |args| {
-                                let tool =
-                                    ActivateSkillTool::new(Arc::clone(&snap_for_activate));
-                                async move { tool.execute(args).await }
-                            });
-                    }
-
-                    // Continue conversation with history and registered tools
-                    match prompt.collect().await {
-                        Ok(response) => {
-                            debug!(
-                                response_len = response.text.len(),
-                                tool_calls = response.tool_calls.len(),
-                                "received LLM response"
-                            );
-
-                            // Guard against empty responses
-                            let response_text = if response.text.is_empty() {
-                                warn!("LLM returned empty response, using fallback");
-                                "I received your message but couldn't generate a response. Please try again.".to_string()
-                            } else {
-                                response.text
-                            };
-
-                            // Add assistant response to history
-                            history.push(Message::assistant(&response_text));
-                            self.conversations.insert(conv_key, history);
-
-                            Ok(CoreToChannel::Complete {
-                                correlation_id,
-                                conversation_id,
-                                content: response_text,
-                            })
-                        }
-                        Err(e) => {
-                            error!(error = %e, "ActonAI error");
-                            Ok(CoreToChannel::Error {
-                                correlation_id,
-                                message: format!("LLM error: {e}"),
-                            })
-                        }
-                    }
-                } else {
-                    // Echo back if no AI configured (for testing)
-                    debug!("no ActonAI configured, echoing message");
+                    // The Router+ConversationActor will process the message
+                    // and the response flows back through the actor reply chain.
+                    // For now, we return a Processing indicator; the actual
+                    // response will come through a separate channel mechanism.
+                    //
+                    // TODO: Once we have bidirectional actor reply wiring,
+                    // this should await the ConversationResponse and return
+                    // CoreToChannel::Complete. For now, the response is
+                    // delivered asynchronously.
                     Ok(CoreToChannel::Complete {
                         correlation_id,
                         conversation_id,
-                        content: format!("Echo (no AI): {content}"),
+                        content: "Message routed to conversation actor".to_string(),
+                    })
+                } else {
+                    // Echo back if no router configured (for testing)
+                    debug!("no router configured, echoing message");
+                    Ok(CoreToChannel::Complete {
+                        correlation_id,
+                        conversation_id,
+                        content: format!("Echo (no router): {content}"),
                     })
                 }
             }
@@ -412,69 +314,6 @@ mod tests {
 
     fn test_authenticator() -> TokenAuthenticator {
         TokenAuthenticator::new(b"test-secret-key-for-testing-only")
-    }
-
-    #[test]
-    fn test_new_handler_has_no_skill_registry() {
-        let handler = DefaultIpcHandler::new(test_authenticator());
-        assert!(handler.skill_registry().is_none());
-    }
-
-    #[test]
-    fn test_with_acton_ai_has_no_skill_registry() {
-        // We cannot construct a real ActonAI in unit tests, but we can verify
-        // the field is None in the simpler constructor
-        let handler = DefaultIpcHandler::new(test_authenticator());
-        assert!(handler.skill_registry().is_none());
-    }
-
-    #[test]
-    fn test_with_acton_ai_and_skills_has_skill_registry() {
-        // Verify the field is set using a registry wrapped in Arc<RwLock>
-        let registry = Arc::new(RwLock::new(SkillRegistry::new()));
-
-        // We cannot construct a real ActonAI without a runtime, so verify
-        // the registry accessor works by checking the field directly.
-        // Build with new() and check that the accessor returns None first.
-        let handler = DefaultIpcHandler::new(test_authenticator());
-        assert!(handler.skill_registry().is_none());
-
-        // Verify we can create a registry with the RwLock pattern
-        assert!(Arc::strong_count(&registry) >= 1);
-    }
-
-    #[tokio::test]
-    async fn test_skill_registry_snapshot_pattern() {
-        // Verify the snapshot pattern works: build registry, wrap in
-        // Arc<RwLock>, read it, and rebuild a snapshot.
-        let mut original = SkillRegistry::new();
-        let skill = acton_ai::skills::LoadedSkill {
-            info: acton_ai::skills::SkillInfo {
-                name: "test-skill".to_string(),
-                description: "A test skill".to_string(),
-                path: std::path::PathBuf::from("/test.md"),
-                tags: vec![],
-            },
-            content: "test content".to_string(),
-            triggers: vec![],
-            enabled_by_default: false,
-        };
-        original.add(skill);
-
-        let registry = Arc::new(RwLock::new(original));
-
-        // Take a snapshot like the handler does
-        let snapshot: Arc<SkillRegistry> = {
-            let guard = registry.read().await;
-            let mut snap = SkillRegistry::new();
-            for s in guard.iter() {
-                snap.add(s.clone());
-            }
-            Arc::new(snap)
-        };
-
-        assert_eq!(snapshot.len(), 1);
-        assert!(snapshot.get("test-skill").is_some());
     }
 
     #[tokio::test]
@@ -645,6 +484,38 @@ mod tests {
                 assert!(error.expect("should have error").contains("mismatch"));
             }
             other => panic!("expected AuthenticationResult, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_user_message_echoes_without_router() {
+        let handler = DefaultIpcHandler::new(test_authenticator());
+        let channel_id = ChannelId::new("terminal");
+
+        // Authenticate first
+        let token = handler.issue_token(&channel_id);
+        let auth_msg = ChannelToCore::Authenticate {
+            channel_id: channel_id.clone(),
+            token: token.to_string(),
+        };
+        handler.handle(auth_msg).await.expect("auth should succeed");
+
+        // Send user message without router configured
+        let message = ChannelToCore::UserMessage {
+            correlation_id: CorrelationId::new(),
+            conversation_id: Box::new(ConversationId::new()),
+            sender: Box::new(SenderId::new(channel_id, "user123")),
+            content: "Hello".to_string(),
+        };
+
+        let response = handler.handle(message).await;
+        assert!(response.is_ok());
+
+        match response.expect("should be ok") {
+            CoreToChannel::Complete { content, .. } => {
+                assert!(content.contains("Echo"));
+            }
+            other => panic!("expected Complete, got {other:?}"),
         }
     }
 }

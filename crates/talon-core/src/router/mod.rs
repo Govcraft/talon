@@ -6,6 +6,6 @@
 mod actor;
 
 pub use actor::{
-    ConversationCreated, CreateConversation, EndConversation, GetStats, MessageRouted, Router,
-    RouterConfig, RouterStats, RouteMessage,
+    ConversationCreated, CreateConversation, EndConversation, GetStats, MessageRouted,
+    RouteMessage, Router, RouterConfig, RouterStats, SetupRouter, spawn_router,
 };

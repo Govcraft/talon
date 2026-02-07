@@ -236,25 +236,19 @@ impl RegistryClient {
     /// # Errors
     ///
     /// Returns error if the download fails or the skill is not found.
-    pub async fn download_skill_archive(
-        &self,
-        agent_uri: &str,
-    ) -> SkillSecurityResult<Vec<u8>> {
+    pub async fn download_skill_archive(&self, agent_uri: &str) -> SkillSecurityResult<Vec<u8>> {
         let encoded_uri = urlencoding::encode(agent_uri);
         let url = format!(
             "{}/api/v1/skills/{}/download",
             self.config.base_url, encoded_uri
         );
 
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| SkillSecurityError::ArchiveDownloadFailed {
+        let response = self.client.get(&url).send().await.map_err(|e| {
+            SkillSecurityError::ArchiveDownloadFailed {
                 agent_uri: agent_uri.to_string(),
                 reason: e.to_string(),
-            })?;
+            }
+        })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -344,9 +338,11 @@ impl RegistryClient {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| SkillSecurityError::RegistryError {
-            message: "request failed after retries".to_string(),
-        }))
+        Err(
+            last_error.unwrap_or_else(|| SkillSecurityError::RegistryError {
+                message: "request failed after retries".to_string(),
+            }),
+        )
     }
 
     /// Get the client configuration

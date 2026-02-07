@@ -16,15 +16,15 @@ use acton_ai::skills::{LoadedSkill, SkillInfo, SkillRegistry};
 use agent_uri::AgentUri;
 use agent_uri_attestation::{AttestationClaims, Verifier, VerifyingKey};
 use base64::Engine;
-use omnibor::hash_algorithm::Sha256;
 use omnibor::ArtifactId;
 use omnibor::ArtifactIdBuilder;
+use omnibor::hash_algorithm::Sha256;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::skills::cache::{AttestationCache, AttestationCacheConfig};
 use crate::skills::capabilities::{
-    find_missing_capabilities, parse_capabilities, tools_to_capabilities, CapabilityPath,
+    CapabilityPath, find_missing_capabilities, parse_capabilities, tools_to_capabilities,
 };
 use crate::skills::error::{SkillSecurityError, SkillSecurityResult};
 use crate::skills::integrity::compute_artifact_id;
@@ -70,7 +70,6 @@ impl Default for SecureSkillRegistryConfig {
         }
     }
 }
-
 
 /// Secure skill registry with attestation verification
 ///
@@ -302,13 +301,12 @@ impl SecureSkillRegistry {
             .await?;
 
         // 2. Parse archive as UTF-8
-        let archive_str =
-            String::from_utf8(archive_bytes.clone()).map_err(|e| {
-                SkillSecurityError::ArchiveParseError {
-                    agent_uri: agent_uri.to_string(),
-                    reason: format!("invalid UTF-8: {e}"),
-                }
-            })?;
+        let archive_str = String::from_utf8(archive_bytes.clone()).map_err(|e| {
+            SkillSecurityError::ArchiveParseError {
+                agent_uri: agent_uri.to_string(),
+                reason: format!("invalid UTF-8: {e}"),
+            }
+        })?;
 
         // 3. Parse skill using agent-skills crate
         let skill = agent_skills::Skill::parse(&archive_str).map_err(|e| {
@@ -348,10 +346,7 @@ impl SecureSkillRegistry {
         let skill_name = loaded_skill.info.name.clone();
 
         // 5. Fetch attestation token
-        let attestation_response = self
-            .registry_client
-            .fetch_attestation(agent_uri)
-            .await?;
+        let attestation_response = self.registry_client.fetch_attestation(agent_uri).await?;
 
         // 6. Verify attestation
         let claims = self
@@ -387,8 +382,7 @@ impl SecureSkillRegistry {
         );
 
         // 11. Store in verified_skills map
-        self.verified_skills
-            .insert(agent_uri.to_string(), verified);
+        self.verified_skills.insert(agent_uri.to_string(), verified);
 
         // 12. Add to inner SkillRegistry for tool discovery
         {
@@ -417,16 +411,10 @@ impl SecureSkillRegistry {
     /// # Errors
     ///
     /// Returns error if key fetch, decoding, or validation fails.
-    pub async fn fetch_and_add_trust_root(
-        &mut self,
-        domain: &str,
-    ) -> SkillSecurityResult<()> {
+    pub async fn fetch_and_add_trust_root(&mut self, domain: &str) -> SkillSecurityResult<()> {
         info!(domain = %domain, "fetching trust root keys");
 
-        let keys_response = self
-            .registry_client
-            .fetch_trust_root_keys(domain)
-            .await?;
+        let keys_response = self.registry_client.fetch_trust_root_keys(domain).await?;
 
         for key_info in &keys_response.keys {
             let key_bytes = base64::engine::general_purpose::STANDARD
@@ -439,10 +427,7 @@ impl SecureSkillRegistry {
             if key_bytes.len() != 32 {
                 return Err(SkillSecurityError::TrustRootFetchFailed {
                     domain: domain.to_string(),
-                    reason: format!(
-                        "key must be 32 bytes, got {}",
-                        key_bytes.len()
-                    ),
+                    reason: format!("key must be 32 bytes, got {}", key_bytes.len()),
                 });
             }
 
@@ -494,12 +479,11 @@ impl SecureSkillRegistry {
         skill_name: &str,
         capability: &CapabilityPath,
     ) -> SkillSecurityResult<()> {
-        let skill = self
-            .verified_skills
-            .get(skill_name)
-            .ok_or_else(|| SkillSecurityError::SkillNotFound {
+        let skill = self.verified_skills.get(skill_name).ok_or_else(|| {
+            SkillSecurityError::SkillNotFound {
                 skill_name: skill_name.to_string(),
-            })?;
+            }
+        })?;
 
         if skill.has_capability(capability) {
             Ok(())
@@ -591,13 +575,12 @@ impl SecureSkillRegistry {
     /// Load a skill from a path
     async fn load_skill_from_path(&self, path: &Path) -> SkillSecurityResult<LoadedSkill> {
         // Use acton-ai's skill loading
-        let registry =
-            SkillRegistry::from_paths(&[path])
-                .await
-                .map_err(|e| SkillSecurityError::SkillLoadError {
-                    skill_name: path.display().to_string(),
-                    reason: e.to_string(),
-                })?;
+        let registry = SkillRegistry::from_paths(&[path]).await.map_err(|e| {
+            SkillSecurityError::SkillLoadError {
+                skill_name: path.display().to_string(),
+                reason: e.to_string(),
+            }
+        })?;
 
         registry
             .iter()
@@ -647,13 +630,12 @@ impl SecureSkillRegistry {
                 .await?;
 
             // Verify and parse the token
-            let claims = self
-                .verifier
-                .verify(&response.token)
-                .map_err(|e| SkillSecurityError::AttestationVerification {
+            let claims = self.verifier.verify(&response.token).map_err(|e| {
+                SkillSecurityError::AttestationVerification {
                     skill_name: skill_name.to_string(),
                     reason: e.to_string(),
-                })?;
+                }
+            })?;
 
             // Cache the attestation
             self.cache.insert(skill_name, claims.clone())?;
@@ -792,13 +774,10 @@ impl SecureSkillRegistry {
     }
 }
 
-
 // ========== Helper functions ==========
 
 /// Create a placeholder attestation for unauthenticated skills
-fn create_placeholder_attestation(
-    agent_uri: &AgentUri,
-) -> SkillSecurityResult<AttestationClaims> {
+fn create_placeholder_attestation(agent_uri: &AgentUri) -> SkillSecurityResult<AttestationClaims> {
     AttestationClaims::builder()
         .agent_uri(agent_uri.to_string())
         .issuer("local")
@@ -882,7 +861,8 @@ mod tests {
 
     #[test]
     fn test_placeholder_attestation() {
-        let uri = AgentUri::parse("agent://test.com/skill/skill_01h455vb4pex5vsknk084sn02q").unwrap();
+        let uri =
+            AgentUri::parse("agent://test.com/skill/skill_01h455vb4pex5vsknk084sn02q").unwrap();
         let claims = create_placeholder_attestation(&uri).unwrap();
 
         assert_eq!(claims.iss, "local");

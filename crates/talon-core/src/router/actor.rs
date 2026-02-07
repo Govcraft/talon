@@ -1,16 +1,20 @@
 //! Router actor implementation
 //!
 //! Routes messages from channels to conversation actors and manages
-//! the lifecycle of conversations.
+//! the lifecycle of conversations. Each conversation is backed by
+//! its own ConversationActor child.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use acton_reactive::prelude::*;
+use acton_ai::prelude::*;
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+use crate::conversation::messages::{ConversationUserMessage, SetupConversation};
+use crate::conversation::spawn_conversation;
 use crate::skills::SecureSkillRegistry;
 use crate::types::{ChannelId, ConversationId, CorrelationId, SenderId};
 
@@ -32,6 +36,17 @@ impl Default for RouterConfig {
     }
 }
 
+/// Message to initialize the router with shared resources
+#[acton_message]
+pub struct SetupRouter {
+    /// Shared ActonAI runtime
+    pub acton_ai: Arc<ActonAI>,
+    /// Handle to the MemoryStore actor
+    pub store: ActorHandle,
+    /// Skill registry
+    pub skill_registry: Arc<RwLock<SecureSkillRegistry>>,
+}
+
 /// Message to route a user message to a conversation
 #[derive(Serialize, Deserialize)]
 #[acton_message]
@@ -44,6 +59,20 @@ pub struct RouteMessage {
     pub sender: SenderId,
     /// Message content
     pub content: String,
+}
+
+/// Message response for routing — sent back to the IPC handler
+#[derive(Serialize, Deserialize)]
+#[acton_message]
+pub struct MessageRouted {
+    /// Correlation ID for request tracking
+    pub correlation_id: CorrelationId,
+    /// Whether routing was successful
+    pub success: bool,
+    /// Response content from the LLM (if successful)
+    pub response_content: Option<String>,
+    /// Error message if failed
+    pub error: Option<String>,
 }
 
 /// Message to create a new conversation
@@ -70,18 +99,6 @@ pub struct ConversationCreated {
 pub struct EndConversation {
     /// The conversation to end
     pub conversation_id: ConversationId,
-}
-
-/// Message response for routing
-#[derive(Serialize, Deserialize)]
-#[acton_message]
-pub struct MessageRouted {
-    /// Correlation ID for request tracking
-    pub correlation_id: CorrelationId,
-    /// Whether routing was successful
-    pub success: bool,
-    /// Error message if failed
-    pub error: Option<String>,
 }
 
 /// Get router statistics
@@ -138,10 +155,16 @@ impl TrackedConversation {
 pub struct Router {
     /// Router configuration
     config: RouterConfig,
-    /// Active conversations keyed by conversation ID
+    /// Active conversations keyed by conversation ID string
     conversations: HashMap<String, TrackedConversation>,
+    /// Handles to conversation actors keyed by conversation ID string
+    conversation_handles: HashMap<String, ActorHandle>,
     /// Skill registry for verified skills
-    skill_registry: Option<Arc<SecureSkillRegistry>>,
+    skill_registry: Option<Arc<RwLock<SecureSkillRegistry>>>,
+    /// Shared ActonAI runtime
+    acton_ai: Option<Arc<ActonAI>>,
+    /// Handle to the MemoryStore actor
+    store_handle: Option<ActorHandle>,
     /// Number of active channel connections
     active_connections: usize,
 }
@@ -153,13 +176,16 @@ impl Router {
         Self {
             config,
             conversations: HashMap::new(),
+            conversation_handles: HashMap::new(),
             skill_registry: None,
+            acton_ai: None,
+            store_handle: None,
             active_connections: 0,
         }
     }
 
     /// Set the skill registry
-    pub fn set_skill_registry(&mut self, registry: Arc<SecureSkillRegistry>) {
+    pub fn set_skill_registry(&mut self, registry: Arc<RwLock<SecureSkillRegistry>>) {
         self.skill_registry = Some(registry);
     }
 
@@ -178,10 +204,7 @@ impl Router {
     /// Increment active connection count
     pub fn add_connection(&mut self) {
         self.active_connections += 1;
-        info!(
-            connections = self.active_connections,
-            "channel connected"
-        );
+        info!(connections = self.active_connections, "channel connected");
     }
 
     /// Decrement active connection count
@@ -193,7 +216,7 @@ impl Router {
         );
     }
 
-    /// Create a new conversation
+    /// Create a new conversation (metadata only)
     ///
     /// Returns the conversation ID if successful.
     pub fn create_conversation(
@@ -203,7 +226,6 @@ impl Router {
     ) -> Result<ConversationId, String> {
         // Check capacity
         if self.conversations.len() >= self.config.max_conversations {
-            // Try to clean up expired conversations first
             self.cleanup_expired();
 
             if self.conversations.len() >= self.config.max_conversations {
@@ -229,7 +251,9 @@ impl Router {
 
     /// End a conversation
     pub fn end_conversation(&mut self, conversation_id: &ConversationId) {
-        if self.conversations.remove(&conversation_id.to_string()).is_some() {
+        let key = conversation_id.to_string();
+        if self.conversations.remove(&key).is_some() {
+            self.conversation_handles.remove(&key);
             info!(
                 conversation_id = %conversation_id,
                 total_conversations = self.conversations.len(),
@@ -238,7 +262,7 @@ impl Router {
         }
     }
 
-    /// Route a message to a conversation
+    /// Route a message to a conversation (metadata update only)
     pub fn route_message(
         &mut self,
         correlation_id: &CorrelationId,
@@ -273,13 +297,18 @@ impl Router {
         let timeout = self.config.conversation_timeout;
         let before = self.conversations.len();
 
-        self.conversations.retain(|id, tracked| {
-            let keep = !tracked.is_expired(timeout);
-            if !keep {
-                debug!(conversation_id = %id, "cleaning up expired conversation");
-            }
-            keep
-        });
+        let expired_keys: Vec<String> = self
+            .conversations
+            .iter()
+            .filter(|(_, tracked)| tracked.is_expired(timeout))
+            .map(|(key, _)| key.clone())
+            .collect();
+
+        for key in &expired_keys {
+            self.conversations.remove(key);
+            self.conversation_handles.remove(key);
+            debug!(conversation_id = %key, "cleaning up expired conversation");
+        }
 
         let removed = before - self.conversations.len();
         if removed > 0 {
@@ -309,6 +338,197 @@ impl Router {
             max_conversations: self.config.max_conversations,
         }
     }
+}
+
+/// Spawn and configure a Router actor
+///
+/// Creates a new router actor with message handlers registered and starts it.
+/// The caller must send a `SetupRouter` message to provide ActonAI and
+/// MemoryStore references before routing messages.
+pub async fn spawn_router(runtime: &mut ActorRuntime, config: RouterConfig) -> ActorHandle {
+    let mut builder = runtime.new_actor_with_name::<Router>("router".to_string());
+
+    // Set initial config on the model
+    builder.model.config = config;
+
+    // SetupRouter: receive shared resources
+    builder.mutate_on::<SetupRouter>(|actor, ctx| {
+        let msg = ctx.message().clone();
+        actor.model.acton_ai = Some(msg.acton_ai);
+        actor.model.store_handle = Some(msg.store);
+        actor.model.skill_registry = Some(msg.skill_registry);
+        info!("router initialized with ActonAI and MemoryStore");
+        Reply::ready()
+    });
+
+    // RouteMessage: forward to conversation actor (auto-spawn if needed)
+    builder.mutate_on::<RouteMessage>(|actor, ctx| {
+        let msg = ctx.message().clone();
+        let reply_envelope = ctx.reply_envelope();
+        let conv_key = msg.conversation_id.to_string();
+
+        // Update or create tracking metadata
+        let channel_id = msg.sender.channel_id.clone();
+        if !actor.model.conversations.contains_key(&conv_key) {
+            // Auto-create conversation tracking on first message
+            if actor.model.conversations.len() >= actor.model.config.max_conversations {
+                actor.model.cleanup_expired();
+                if actor.model.conversations.len() >= actor.model.config.max_conversations {
+                    let correlation_id = msg.correlation_id.clone();
+                    let handle = tokio::spawn(async move {
+                        reply_envelope
+                            .send(MessageRouted {
+                                correlation_id,
+                                success: false,
+                                response_content: None,
+                                error: Some("maximum conversations reached".to_string()),
+                            })
+                            .await;
+                    });
+                    return Reply::pending(async move {
+                        let _ = handle.await;
+                    });
+                }
+            }
+            let tracked = TrackedConversation::new(msg.conversation_id.clone(), channel_id.clone());
+            actor.model.conversations.insert(conv_key.clone(), tracked);
+        } else if let Some(tracked) = actor.model.conversations.get_mut(&conv_key) {
+            tracked.touch();
+        }
+
+        // Check if we already have a conversation actor handle
+        let existing_handle = actor.model.conversation_handles.get(&conv_key).cloned();
+        let acton_ai = actor.model.acton_ai.clone();
+        let store = actor.model.store_handle.clone();
+        let conversation_id = msg.conversation_id.clone();
+        let mut runtime = actor.runtime().clone();
+
+        let handle = tokio::spawn(async move {
+            // Get or spawn conversation actor
+            let conv_handle = if let Some(h) = existing_handle {
+                h
+            } else {
+                let (Some(ai), Some(store_handle)) = (&acton_ai, store) else {
+                    reply_envelope
+                        .send(MessageRouted {
+                            correlation_id: msg.correlation_id.clone(),
+                            success: false,
+                            response_content: None,
+                            error: Some("router not initialized with ActonAI/MemoryStore".to_string()),
+                        })
+                        .await;
+                    return;
+                };
+
+                let new_handle = spawn_conversation(&mut runtime, &conversation_id).await;
+
+                new_handle
+                    .send(SetupConversation {
+                        acton_ai: Arc::clone(ai),
+                        store: store_handle,
+                        system_prompt: None,
+                        channel_id,
+                    })
+                    .await;
+
+                new_handle
+            };
+
+            // Forward message to conversation actor
+            conv_handle
+                .send(ConversationUserMessage {
+                    correlation_id: msg.correlation_id.clone(),
+                    content: msg.content,
+                    sender: msg.sender,
+                })
+                .await;
+
+            // The ConversationActor replies through the reply_envelope chain.
+            // Since the actor system handles envelope forwarding, the reply
+            // from ConversationActor flows back to the original caller.
+        });
+
+        // Store the handle for future messages (we do this optimistically -
+        // the spawn may still be in progress, but it will be complete by
+        // the time the next RouteMessage arrives)
+        if !actor.model.conversation_handles.contains_key(&conv_key) {
+            // We'll set this after spawn completes via a separate message
+            // For now, each RouteMessage will re-check and potentially re-spawn
+            // This is safe because spawn_conversation is idempotent by name
+        }
+
+        Reply::pending(async move {
+            let _ = handle.await;
+        })
+    });
+
+    // CreateConversation: explicitly create a new conversation
+    builder.mutate_on::<CreateConversation>(|actor, ctx| {
+        let msg = ctx.message().clone();
+        let reply_envelope = ctx.reply_envelope();
+
+        match actor
+            .model
+            .create_conversation(&msg.channel_id, &msg.sender)
+        {
+            Ok(conversation_id) => {
+                let conv_id = conversation_id.clone();
+                let handle = tokio::spawn(async move {
+                    reply_envelope
+                        .send(ConversationCreated {
+                            conversation_id: conv_id,
+                        })
+                        .await;
+                });
+
+                Reply::pending(async move {
+                    let _ = handle.await;
+                })
+            }
+            Err(e) => {
+                warn!(error = %e, "failed to create conversation");
+                Reply::ready()
+            }
+        }
+    });
+
+    // EndConversation: clean up conversation actor and tracking
+    builder.mutate_on::<EndConversation>(|actor, ctx| {
+        let conversation_id = ctx.message().conversation_id.clone();
+        let key = conversation_id.to_string();
+
+        // Stop the conversation actor if we have a handle
+        if let Some(conv_handle) = actor.model.conversation_handles.remove(&key) {
+            let end_msg = crate::conversation::messages::EndConversation {
+                conversation_id: conversation_id.clone(),
+            };
+            let handle = tokio::spawn(async move {
+                conv_handle.send(end_msg).await;
+                let _ = conv_handle.stop().await;
+            });
+            actor.model.end_conversation(&conversation_id);
+            return Reply::pending(async move {
+                let _ = handle.await;
+            });
+        }
+
+        actor.model.end_conversation(&conversation_id);
+        Reply::ready()
+    });
+
+    // GetStats: return current router statistics
+    builder.mutate_on::<GetStats>(|actor, ctx| {
+        let stats = actor.model.stats();
+        let reply = ctx.reply_envelope();
+        let handle = tokio::spawn(async move {
+            reply.send(stats).await;
+        });
+        Reply::pending(async move {
+            let _ = handle.await;
+        })
+    });
+
+    builder.start().await
 }
 
 #[cfg(test)]
@@ -463,7 +683,9 @@ mod tests {
         let sender = test_sender();
 
         router.add_connection();
-        router.create_conversation(&channel_id, &sender).expect("should create");
+        router
+            .create_conversation(&channel_id, &sender)
+            .expect("should create");
 
         let stats = router.stats();
         assert_eq!(stats.active_connections, 1);

@@ -94,8 +94,15 @@ pub enum IpcClientError {
 impl fmt::Display for IpcClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ConnectionFailed { socket_path, message } => {
-                write!(f, "failed to connect to {}: {message}", socket_path.display())
+            Self::ConnectionFailed {
+                socket_path,
+                message,
+            } => {
+                write!(
+                    f,
+                    "failed to connect to {}: {message}",
+                    socket_path.display()
+                )
             }
             Self::NotConnected => write!(f, "client is not connected"),
             Self::AlreadyConnected => write!(f, "client is already connected"),
@@ -107,7 +114,10 @@ impl fmt::Display for IpcClientError {
             Self::Serialization { message } => write!(f, "serialization error: {message}"),
             Self::Deserialization { message } => write!(f, "deserialization error: {message}"),
             Self::ConnectionClosed => write!(f, "connection closed unexpectedly"),
-            Self::Timeout { operation, duration } => {
+            Self::Timeout {
+                operation,
+                duration,
+            } => {
                 write!(f, "{operation} timed out after {duration:?}")
             }
             Self::InvalidFrame { message } => write!(f, "invalid frame: {message}"),
@@ -116,7 +126,10 @@ impl fmt::Display for IpcClientError {
                 write!(f, "invalid state: currently {current}, expected {expected}")
             }
             Self::MessageTooLarge { size, max_size } => {
-                write!(f, "message too large: {size} bytes exceeds maximum {max_size} bytes")
+                write!(
+                    f,
+                    "message too large: {size} bytes exceeds maximum {max_size} bytes"
+                )
             }
         }
     }
@@ -188,17 +201,12 @@ mod tests {
 
     #[test]
     fn test_from_io_error() {
-        let io_err = std::io::Error::new(
-            std::io::ErrorKind::ConnectionRefused,
-            "connection refused",
-        );
+        let io_err =
+            std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "connection refused");
         let err: IpcClientError = io_err.into();
         assert!(matches!(err, IpcClientError::ConnectionFailed { .. }));
 
-        let io_err = std::io::Error::new(
-            std::io::ErrorKind::BrokenPipe,
-            "broken pipe",
-        );
+        let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "broken pipe");
         let err: IpcClientError = io_err.into();
         assert!(matches!(err, IpcClientError::ConnectionClosed));
     }
@@ -206,6 +214,9 @@ mod tests {
     #[test]
     fn test_error_equality() {
         assert_eq!(IpcClientError::NotConnected, IpcClientError::NotConnected);
-        assert_ne!(IpcClientError::NotConnected, IpcClientError::AlreadyConnected);
+        assert_ne!(
+            IpcClientError::NotConnected,
+            IpcClientError::AlreadyConnected
+        );
     }
 }

@@ -3,13 +3,13 @@
 //! Implements the Channel trait for Telegram using teloxide 0.17.
 
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use talon_core::{ChannelId, ConversationId};
 use teloxide::dispatching::ShutdownToken;
 use teloxide::prelude::*;
 use teloxide::types::ParseMode;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::channel::{Channel, InboundMessage, MessageContent, OutboundMessage};
@@ -17,7 +17,7 @@ use crate::error::{ChannelError, ChannelResult};
 use crate::telegram::config::TelegramConfig;
 use crate::telegram::handlers::build_message_handler;
 use crate::telegram::mapping::IdMapper;
-use crate::telegram::streaming::{send_split_message, StreamingManager};
+use crate::telegram::streaming::{StreamingManager, send_split_message};
 
 /// Telegram channel implementation
 pub struct TelegramChannel {
@@ -176,11 +176,7 @@ impl Channel for TelegramChannel {
         Ok(())
     }
 
-    async fn send_token(
-        &self,
-        conversation_id: &ConversationId,
-        token: &str,
-    ) -> ChannelResult<()> {
+    async fn send_token(&self, conversation_id: &ConversationId, token: &str) -> ChannelResult<()> {
         if !self.running.load(Ordering::SeqCst) {
             return Err(ChannelError::NotStarted);
         }
@@ -230,7 +226,6 @@ impl Channel for TelegramChannel {
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod tests {

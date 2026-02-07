@@ -5,11 +5,11 @@
 //! - JSON payload bytes
 //! - Maximum message size: 16 MiB
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::path::Path;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::UnixStream;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 
 use super::error::{IpcClientError, IpcClientResult};
 
@@ -53,18 +53,15 @@ impl IpcReader {
     pub async fn receive<M: DeserializeOwned>(&mut self) -> IpcClientResult<M> {
         // Read length prefix (4 bytes, big-endian)
         let mut len_bytes = [0u8; 4];
-        self.reader
-            .read_exact(&mut len_bytes)
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                    IpcClientError::ConnectionClosed
-                } else {
-                    IpcClientError::ReceiveFailed {
-                        message: e.to_string(),
-                    }
+        self.reader.read_exact(&mut len_bytes).await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                IpcClientError::ConnectionClosed
+            } else {
+                IpcClientError::ReceiveFailed {
+                    message: e.to_string(),
                 }
-            })?;
+            }
+        })?;
 
         let len = u32::from_be_bytes(len_bytes) as usize;
 
@@ -83,18 +80,15 @@ impl IpcReader {
 
         // Read payload
         let mut payload = vec![0u8; len];
-        self.reader
-            .read_exact(&mut payload)
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                    IpcClientError::ConnectionClosed
-                } else {
-                    IpcClientError::ReceiveFailed {
-                        message: e.to_string(),
-                    }
+        self.reader.read_exact(&mut payload).await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                IpcClientError::ConnectionClosed
+            } else {
+                IpcClientError::ReceiveFailed {
+                    message: e.to_string(),
                 }
-            })?;
+            }
+        })?;
 
         // Deserialize JSON
         let message: M = serde_json::from_slice(&payload)?;
@@ -159,11 +153,12 @@ impl IpcWriter {
 
     /// Shutdown the write half
     pub async fn shutdown(&mut self) -> IpcClientResult<()> {
-        self.writer.shutdown().await.map_err(|e| {
-            IpcClientError::SendFailed {
+        self.writer
+            .shutdown()
+            .await
+            .map_err(|e| IpcClientError::SendFailed {
                 message: format!("shutdown failed: {e}"),
-            }
-        })
+            })
     }
 }
 
@@ -178,12 +173,12 @@ impl IpcConnection {
     ///
     /// Returns error if connection fails.
     pub async fn connect(socket_path: &Path) -> IpcClientResult<Self> {
-        let stream = UnixStream::connect(socket_path)
-            .await
-            .map_err(|e| IpcClientError::ConnectionFailed {
+        let stream = UnixStream::connect(socket_path).await.map_err(|e| {
+            IpcClientError::ConnectionFailed {
                 socket_path: socket_path.to_path_buf(),
                 message: e.to_string(),
-            })?;
+            }
+        })?;
 
         let (read_half, write_half) = stream.into_split();
 
@@ -261,11 +256,18 @@ mod tests {
 
                 // Read message from client
                 let mut len_bytes = [0u8; 4];
-                reader.read_exact(&mut len_bytes).await.expect("failed to read len");
+                reader
+                    .read_exact(&mut len_bytes)
+                    .await
+                    .expect("failed to read len");
                 let len = u32::from_be_bytes(len_bytes) as usize;
                 let mut payload = vec![0u8; len];
-                reader.read_exact(&mut payload).await.expect("failed to read payload");
-                let msg: TestMessage = serde_json::from_slice(&payload).expect("failed to deserialize");
+                reader
+                    .read_exact(&mut payload)
+                    .await
+                    .expect("failed to read payload");
+                let msg: TestMessage =
+                    serde_json::from_slice(&payload).expect("failed to deserialize");
 
                 // Echo back with modified content
                 let response = TestMessage {
@@ -273,8 +275,14 @@ mod tests {
                     number: msg.number + 1,
                 };
                 let json = serde_json::to_vec(&response).expect("failed to serialize");
-                writer.write_all(&(json.len() as u32).to_be_bytes()).await.expect("failed to write len");
-                writer.write_all(&json).await.expect("failed to write payload");
+                writer
+                    .write_all(&(json.len() as u32).to_be_bytes())
+                    .await
+                    .expect("failed to write len");
+                writer
+                    .write_all(&json)
+                    .await
+                    .expect("failed to write payload");
                 writer.flush().await.expect("failed to flush");
 
                 // Clean up
@@ -289,7 +297,9 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Connect client
-        let mut conn = IpcConnection::connect(&socket_path).await.expect("failed to connect");
+        let mut conn = IpcConnection::connect(&socket_path)
+            .await
+            .expect("failed to connect");
 
         // Send message
         let msg = TestMessage {

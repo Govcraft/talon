@@ -131,7 +131,9 @@ impl SecureToolExecutor {
     /// `true` if the skill has the capability to use this tool.
     #[must_use]
     pub fn is_tool_allowed(&self, skill_name: &str, tool_name: &str) -> bool {
-        self.registry.check_tool_allowed(skill_name, tool_name).is_ok()
+        self.registry
+            .check_tool_allowed(skill_name, tool_name)
+            .is_ok()
     }
 
     /// Execute a tool with capability verification
@@ -263,10 +265,7 @@ mod tests {
             verify_integrity: false,
             ..Default::default()
         };
-        Arc::new(
-            SecureSkillRegistry::with_config(config)
-                .expect("registry should be creatable"),
-        )
+        Arc::new(SecureSkillRegistry::with_config(config).expect("registry should be creatable"))
     }
 
     fn test_context() -> ExecutionContext {
@@ -318,9 +317,7 @@ mod tests {
         let executor = SecureToolExecutor::new(registry);
         let ctx = test_context();
 
-        let result = executor
-            .execute(&ctx, "Read", serde_json::json!({}))
-            .await;
+        let result = executor.execute(&ctx, "Read", serde_json::json!({})).await;
 
         assert!(result.is_err());
         match result {

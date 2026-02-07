@@ -19,9 +19,7 @@ async fn main() -> TalonResult<()> {
     tracing::info!("Talon daemon starting");
 
     // Build runtime configuration
-    let config = RuntimeConfigBuilder::new()
-        .max_conversations(100)
-        .build();
+    let config = RuntimeConfigBuilder::new().max_conversations(100).build();
 
     tracing::info!(
         socket_path = %config.ipc_socket_path.display(),

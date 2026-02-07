@@ -1,8 +1,8 @@
 //! Terminal UI implementation
 
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use talon_core::{ChannelId, ConversationId};
 use tokio::sync::mpsc;
 

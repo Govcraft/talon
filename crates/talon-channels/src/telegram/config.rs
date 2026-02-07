@@ -168,8 +168,9 @@ impl TelegramConfig {
             .args([
                 "encrypt",
                 "--with-key=host",
-                "--name", CREDENTIAL_NAME,
-                "-",  // read from stdin
+                "--name",
+                CREDENTIAL_NAME,
+                "-", // read from stdin
                 cred_path.to_str().unwrap_or(""),
             ])
             .stdin(std::process::Stdio::piped())
@@ -190,11 +191,12 @@ impl TelegramConfig {
             })?;
         }
 
-        let output = child.wait_with_output().map_err(|e| {
-            TelegramConfigError::CredentialError {
-                message: format!("systemd-creds failed: {e}"),
-            }
-        })?;
+        let output =
+            child
+                .wait_with_output()
+                .map_err(|e| TelegramConfigError::CredentialError {
+                    message: format!("systemd-creds failed: {e}"),
+                })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -210,7 +212,10 @@ impl TelegramConfig {
             }
         })?;
 
-        tracing::info!("Telegram token encrypted and stored at {}", cred_path.display());
+        tracing::info!(
+            "Telegram token encrypted and stored at {}",
+            cred_path.display()
+        );
         Ok(())
     }
 

@@ -5,7 +5,7 @@ mod chat;
 mod config;
 mod skills;
 
-pub use channel::{channel, ChannelArgs};
-pub use chat::{chat, ChatArgs};
-pub use config::{config, ConfigArgs};
-pub use skills::{skills, SkillsArgs};
+pub use channel::{ChannelArgs, channel};
+pub use chat::{ChatArgs, chat};
+pub use config::{ConfigArgs, config};
+pub use skills::{SkillsArgs, skills};
