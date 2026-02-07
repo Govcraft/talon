@@ -1,0 +1,21 @@
+[Unit]
+Description=Talon Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/talon-telegram
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+# Load encrypted credential - systemd decrypts it before starting
+LoadCredentialEncrypted=telegram-token:/etc/credstore.encrypted/telegram-token
+
+[Install]
+WantedBy=multi-user.target

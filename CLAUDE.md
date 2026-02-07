@@ -103,4 +103,32 @@ pub struct SecureSkillRegistry {
 - `talon-hub`: Proprietary (hosted service)
 
 ## Development Approach
-- Always use the /rust-planner skill to plan out implementations and write to a new plan file.- Always use the /rust-author skill to do the actual Rust implementation passing the plan file as an input.
+
+### CRITICAL: Use acton-ai's Built-in Features
+
+**DO NOT** write custom LLM clients, tool executors, or conversation handlers. **ALWAYS** use `acton-ai`'s high-level APIs:
+
+```rust
+// CORRECT: Use ActonAI facade with built-in tools
+let ai = ActonAI::builder()
+    .app_name("talon")
+    .ollama_at("qwen2.5:7b", "http://localhost:11434")
+    .with_builtins()  // Enables read_file, write_file, bash, etc.
+    .launch()
+    .await?;
+
+let response = ai.prompt("List files").collect().await?;
+println!("{}", response.text);
+```
+
+**NEVER** do this:
+- Write custom HTTP clients for Ollama
+- Implement custom tool execution loops
+- Create custom streaming parsers
+- Duplicate functionality that acton-ai already provides
+
+The whole point of Talon is to extend acton-ai with security (attestation, trust tiers), not to reimplement its core features.
+
+### Planning and Implementation
+- Always use the /rust-planner skill to plan out implementations and write to a new plan file.
+- Always use the /rust-author skill to do the actual Rust implementation passing the plan file as an input.
