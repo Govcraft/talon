@@ -70,9 +70,20 @@ async fn main() -> TalonResult<()> {
     let shutdown_signal = Arc::clone(&shutdown);
 
     tokio::spawn(async move {
-        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+        let mut sigint = match signal(SignalKind::interrupt()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to install SIGINT handler");
+                return;
+            }
+        };
+        let mut sigterm = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to install SIGTERM handler");
+                return;
+            }
+        };
 
         tokio::select! {
             _ = sigint.recv() => {
