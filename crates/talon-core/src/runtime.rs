@@ -11,7 +11,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acton_ai::prelude::*;
+use acton_ai::skills::SkillRegistry;
 use acton_reactive::prelude::{ActonApp, ActorRuntime};
+use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::error::{TalonError, TalonResult};
@@ -36,6 +38,12 @@ pub struct RuntimeConfig {
     pub secret_key: Vec<u8>,
     /// Skill registry configuration
     pub skill_registry_config: SecureSkillRegistryConfig,
+    /// TalonHub URL for skill registry
+    pub hub_url: Option<String>,
+    /// List of skill agent URIs to load at startup
+    pub hub_skill_uris: Vec<String>,
+    /// Trust root domain to fetch keys from
+    pub hub_trust_root_domain: Option<String>,
 }
 
 impl Default for RuntimeConfig {
@@ -54,6 +62,9 @@ impl Default for RuntimeConfig {
             ollama_model: "qwen2.5:7b".to_string(),
             secret_key: generate_default_secret(),
             skill_registry_config: SecureSkillRegistryConfig::default(),
+            hub_url: None,
+            hub_skill_uris: vec![],
+            hub_trust_root_domain: None,
         }
     }
 }
@@ -73,8 +84,8 @@ fn generate_default_secret() -> Vec<u8> {
 pub struct TalonRuntime {
     /// The actor runtime
     runtime: ActorRuntime,
-    /// Secure skill registry
-    skill_registry: Arc<SecureSkillRegistry>,
+    /// Secure skill registry (wrapped in RwLock for runtime mutability)
+    skill_registry: Arc<RwLock<SecureSkillRegistry>>,
     /// ActonAI runtime with built-in tools
     acton_ai: Arc<ActonAI>,
     /// IPC message handler
@@ -108,13 +119,20 @@ impl TalonRuntime {
         // Initialize the actor runtime
         let mut runtime = ActonApp::launch_async().await;
 
-        // Create the skill registry
-        let skill_registry = Arc::new(
-            SecureSkillRegistry::with_config(config.skill_registry_config.clone())
-                .map_err(|e| TalonError::Config {
-                    message: format!("failed to create skill registry: {e}"),
-                })?,
-        );
+        // Create the shared inner registry that both SecureSkillRegistry
+        // and DefaultIpcHandler will reference
+        let shared_registry = Arc::new(RwLock::new(SkillRegistry::new()));
+
+        // Create the secure skill registry with the shared inner
+        let skill_registry = SecureSkillRegistry::with_shared_registry(
+            config.skill_registry_config.clone(),
+            Arc::clone(&shared_registry),
+        )
+        .map_err(|e| TalonError::Config {
+            message: format!("failed to create skill registry: {e}"),
+        })?;
+
+        let skill_registry = Arc::new(RwLock::new(skill_registry));
 
         // Create ActonAI runtime with built-in tools
         let acton_ai = ActonAI::builder()
@@ -135,11 +153,12 @@ impl TalonRuntime {
             "ActonAI runtime created with built-in tools"
         );
 
-        // Create the IPC handler with ActonAI
+        // Create the IPC handler with ActonAI and shared skill registry
         let authenticator = TokenAuthenticator::new(&config.secret_key);
-        let ipc_handler = Arc::new(DefaultIpcHandler::with_acton_ai(
+        let ipc_handler = Arc::new(DefaultIpcHandler::with_acton_ai_and_skills(
             authenticator,
             Arc::clone(&acton_ai),
+            Arc::clone(&shared_registry),
         ));
 
         // Create and start the router actor
@@ -174,7 +193,7 @@ impl TalonRuntime {
 
     /// Get the skill registry
     #[must_use]
-    pub fn skill_registry(&self) -> &Arc<SecureSkillRegistry> {
+    pub fn skill_registry(&self) -> &Arc<RwLock<SecureSkillRegistry>> {
         &self.skill_registry
     }
 
@@ -194,6 +213,41 @@ impl TalonRuntime {
     #[must_use]
     pub fn config(&self) -> &RuntimeConfig {
         &self.config
+    }
+
+    /// Load skills from the configured hub
+    ///
+    /// Fetches trust root keys and loads configured skills.
+    /// This should be called after runtime creation but before
+    /// accepting user messages.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if trust root or skill loading fails.
+    pub async fn load_skills(&self) -> TalonResult<()> {
+        let mut registry = self.skill_registry.write().await;
+
+        if let Some(domain) = &self.config.hub_trust_root_domain {
+            info!(domain = %domain, "fetching trust root keys");
+            registry
+                .fetch_and_add_trust_root(domain)
+                .await
+                .map_err(|e| TalonError::Config {
+                    message: format!("failed to fetch trust root: {e}"),
+                })?;
+        }
+
+        for uri in &self.config.hub_skill_uris {
+            info!(uri = %uri, "loading skill from hub");
+            registry
+                .load_from_hub(uri)
+                .await
+                .map_err(|e| TalonError::Config {
+                    message: format!("failed to load skill {uri}: {e}"),
+                })?;
+        }
+
+        Ok(())
     }
 
     /// Start the IPC listener
@@ -340,6 +394,27 @@ impl RuntimeConfigBuilder {
         self
     }
 
+    /// Set the TalonHub URL for skill registry
+    #[must_use]
+    pub fn hub_url(mut self, url: impl Into<String>) -> Self {
+        self.config.hub_url = Some(url.into());
+        self
+    }
+
+    /// Set the list of skill agent URIs to load at startup
+    #[must_use]
+    pub fn hub_skill_uris(mut self, uris: Vec<String>) -> Self {
+        self.config.hub_skill_uris = uris;
+        self
+    }
+
+    /// Set the trust root domain to fetch keys from
+    #[must_use]
+    pub fn hub_trust_root_domain(mut self, domain: impl Into<String>) -> Self {
+        self.config.hub_trust_root_domain = Some(domain.into());
+        self
+    }
+
     /// Build the configuration
     #[must_use]
     pub fn build(self) -> RuntimeConfig {
@@ -388,6 +463,30 @@ mod tests {
     fn test_generate_default_secret() {
         let secret = generate_default_secret();
         assert_eq!(secret.len(), 32);
+    }
+
+    #[test]
+    fn test_hub_config_defaults() {
+        let config = RuntimeConfig::default();
+        assert!(config.hub_url.is_none());
+        assert!(config.hub_skill_uris.is_empty());
+        assert!(config.hub_trust_root_domain.is_none());
+    }
+
+    #[test]
+    fn test_config_builder_hub() {
+        let config = RuntimeConfigBuilder::new()
+            .hub_url("http://localhost:3000")
+            .hub_trust_root_domain("talonhub.io")
+            .hub_skill_uris(vec!["agent://talonhub.io/skill/example".to_string()])
+            .build();
+
+        assert_eq!(config.hub_url.as_deref(), Some("http://localhost:3000"));
+        assert_eq!(
+            config.hub_trust_root_domain.as_deref(),
+            Some("talonhub.io")
+        );
+        assert_eq!(config.hub_skill_uris.len(), 1);
     }
 
     #[tokio::test]
