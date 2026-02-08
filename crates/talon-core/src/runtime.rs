@@ -14,6 +14,7 @@ use std::time::Duration;
 use acton_ai::prelude::*;
 use acton_ai::skills::SkillRegistry;
 use acton_reactive::prelude::{ActonApp, ActorHandle, ActorRuntime};
+use dashmap::DashMap;
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -96,8 +97,8 @@ pub struct TalonRuntime {
     runtime: ActorRuntime,
     /// Secure skill registry (wrapped in RwLock for runtime mutability)
     skill_registry: Arc<RwLock<SecureSkillRegistry>>,
-    /// ActonAI runtime with built-in tools
-    acton_ai: Arc<ActonAI>,
+    /// ActonAI runtime with built-in tools (Clone via internal Arc)
+    acton_ai: ActonAI,
     /// Handle to the Router actor
     router_handle: ActorHandle,
     /// Handle to the MemoryStore actor
@@ -161,8 +162,6 @@ impl TalonRuntime {
                 message: format!("failed to create ActonAI runtime: {e}"),
             })?;
 
-        let acton_ai = Arc::new(acton_ai);
-
         info!(
             ollama_host = %config.ollama_host,
             ollama_model = %config.ollama_model,
@@ -189,17 +188,23 @@ impl TalonRuntime {
             "MemoryStore actor spawned and initialized"
         );
 
+        // Create the shared pending-responses map used by both the Router
+        // (to resolve responses) and the IPC handler (to register waiters)
+        let pending_responses: Arc<DashMap<String, tokio::sync::oneshot::Sender<String>>> =
+            Arc::new(DashMap::new());
+
         // Spawn Router actor with configuration
         let router_config = RouterConfig {
             max_conversations: config.max_conversations,
             conversation_timeout: config.conversation_timeout,
         };
-        let router_handle = spawn_router(&mut runtime, router_config).await;
+        let router_handle =
+            spawn_router(&mut runtime, router_config, Arc::clone(&pending_responses)).await;
 
         // Initialize the router with shared resources
         router_handle
             .send(SetupRouter {
-                acton_ai: Arc::clone(&acton_ai),
+                acton_ai: acton_ai.clone(),
                 store: store_handle.clone(),
                 skill_registry: Arc::clone(&skill_registry),
             })
@@ -212,6 +217,7 @@ impl TalonRuntime {
         let ipc_handler = Arc::new(DefaultIpcHandler::with_router(
             authenticator,
             router_handle.clone(),
+            pending_responses,
         ));
 
         info!("Talon runtime initialized successfully");
@@ -242,7 +248,7 @@ impl TalonRuntime {
 
     /// Get the ActonAI runtime
     #[must_use]
-    pub fn acton_ai(&self) -> &Arc<ActonAI> {
+    pub fn acton_ai(&self) -> &ActonAI {
         &self.acton_ai
     }
 
@@ -557,10 +563,7 @@ mod tests {
             .build();
 
         assert_eq!(config.hub_url.as_deref(), Some("http://localhost:3000"));
-        assert_eq!(
-            config.hub_trust_root_domain.as_deref(),
-            Some("talonhub.io")
-        );
+        assert_eq!(config.hub_trust_root_domain.as_deref(), Some("talonhub.io"));
         assert_eq!(config.hub_skill_uris.len(), 1);
     }
 

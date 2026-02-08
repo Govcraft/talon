@@ -4,9 +4,12 @@
 //! and message routing. User messages are delegated to the Router actor
 //! which manages per-conversation actors for LLM processing.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use async_trait::async_trait;
 use dashmap::DashMap;
-use std::sync::Arc;
+use tokio::sync::oneshot;
 use tracing::{debug, info, warn};
 
 use acton_reactive::prelude::{ActorHandle, ActorHandleInterface};
@@ -50,6 +53,9 @@ pub struct DefaultIpcHandler {
     authenticated_channels: Arc<DashMap<String, ValidatedToken>>,
     /// Router actor handle for delegating user messages
     router_handle: Option<ActorHandle>,
+    /// Shared map of pending oneshot senders keyed by correlation ID.
+    /// Inserted before routing; resolved by the Router's ConversationResponse handler.
+    pending_responses: Arc<DashMap<String, oneshot::Sender<String>>>,
 }
 
 impl DefaultIpcHandler {
@@ -64,6 +70,7 @@ impl DefaultIpcHandler {
             authenticator,
             authenticated_channels: Arc::new(DashMap::new()),
             router_handle: None,
+            pending_responses: Arc::new(DashMap::new()),
         }
     }
 
@@ -73,12 +80,18 @@ impl DefaultIpcHandler {
     ///
     /// * `authenticator` - The token authenticator to use
     /// * `router` - Handle to the Router actor
+    /// * `pending_responses` - Shared map for correlating LLM responses
     #[must_use]
-    pub fn with_router(authenticator: TokenAuthenticator, router: ActorHandle) -> Self {
+    pub fn with_router(
+        authenticator: TokenAuthenticator,
+        router: ActorHandle,
+        pending_responses: Arc<DashMap<String, oneshot::Sender<String>>>,
+    ) -> Self {
         Self {
             authenticator,
             authenticated_channels: Arc::new(DashMap::new()),
             router_handle: Some(router),
+            pending_responses,
         }
     }
 
@@ -230,8 +243,13 @@ impl IpcMessageHandler for DefaultIpcHandler {
                     "delegating user message to router"
                 );
 
-                // Delegate to Router actor
+                // Delegate to Router actor and await the LLM response
                 if let Some(router) = &self.router_handle {
+                    // Create a oneshot channel to receive the response
+                    let (tx, rx) = oneshot::channel();
+                    self.pending_responses
+                        .insert(correlation_id.to_string(), tx);
+
                     router
                         .send(RouteMessage {
                             correlation_id: correlation_id.clone(),
@@ -241,19 +259,30 @@ impl IpcMessageHandler for DefaultIpcHandler {
                         })
                         .await;
 
-                    // The Router+ConversationActor will process the message
-                    // and the response flows back through the actor reply chain.
-                    // For now, we return a Processing indicator; the actual
-                    // response will come through a separate channel mechanism.
-                    //
-                    // TODO: Once we have bidirectional actor reply wiring,
-                    // this should await the ConversationResponse and return
-                    // CoreToChannel::Complete. For now, the response is
-                    // delivered asynchronously.
+                    // Await the actual LLM response via the shared oneshot
+                    let content = match tokio::time::timeout(Duration::from_secs(120), rx).await {
+                        Ok(Ok(response)) => response,
+                        Ok(Err(_)) => {
+                            warn!(
+                                correlation_id = %correlation_id,
+                                "response channel closed before LLM replied"
+                            );
+                            "Response channel closed".to_string()
+                        }
+                        Err(_) => {
+                            warn!(
+                                correlation_id = %correlation_id,
+                                "LLM request timed out after 120s"
+                            );
+                            self.pending_responses.remove(&correlation_id.to_string());
+                            "Request timed out after 120 seconds".to_string()
+                        }
+                    };
+
                     Ok(CoreToChannel::Complete {
                         correlation_id,
                         conversation_id,
-                        content: "Message routed to conversation actor".to_string(),
+                        content,
                     })
                 } else {
                     // Echo back if no router configured (for testing)

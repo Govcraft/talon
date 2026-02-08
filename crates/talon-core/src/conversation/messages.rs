@@ -2,7 +2,6 @@
 
 use acton_reactive::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 use acton_ai::prelude::ActonAI;
 
@@ -11,10 +10,8 @@ use crate::types::{ChannelId, ConversationId, CorrelationId, SenderId};
 /// Initialization message sent to a newly spawned ConversationActor
 #[acton_message]
 pub struct SetupConversation {
-    /// Shared ActonAI runtime for LLM interaction
-    pub acton_ai: Arc<ActonAI>,
-    /// Handle to the MemoryStore actor for persistence
-    pub store: ActorHandle,
+    /// ActonAI runtime for building the Conversation handle
+    pub acton_ai: ActonAI,
     /// Optional system prompt for this conversation
     pub system_prompt: Option<String>,
     /// Channel this conversation belongs to

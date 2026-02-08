@@ -19,7 +19,7 @@ authors = ["Roland R. Rodriguez, Jr. <rrrodzilla@proton.me>"]
 
 [workspace.dependencies]
 # Core framework
-acton-ai = { version = "0.24", features = ["agent-skills"] }
+acton-ai = { version = "0.25", features = ["agent-skills"] }
 acton-reactive = { version = "7.1", features = ["ipc"] }
 acton-service = { version = "0.15" }
 

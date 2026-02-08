@@ -9,11 +9,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acton_ai::prelude::*;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::conversation::messages::{ConversationUserMessage, SetupConversation};
+use crate::conversation::messages::{
+    ConversationResponse, ConversationUserMessage, SetupConversation,
+};
 use crate::conversation::spawn_conversation;
 use crate::skills::SecureSkillRegistry;
 use crate::types::{ChannelId, ConversationId, CorrelationId, SenderId};
@@ -39,8 +42,8 @@ impl Default for RouterConfig {
 /// Message to initialize the router with shared resources
 #[acton_message]
 pub struct SetupRouter {
-    /// Shared ActonAI runtime
-    pub acton_ai: Arc<ActonAI>,
+    /// ActonAI runtime (Clone via internal Arc)
+    pub acton_ai: ActonAI,
     /// Handle to the MemoryStore actor
     pub store: ActorHandle,
     /// Skill registry
@@ -161,12 +164,16 @@ pub struct Router {
     conversation_handles: HashMap<String, ActorHandle>,
     /// Skill registry for verified skills
     skill_registry: Option<Arc<RwLock<SecureSkillRegistry>>>,
-    /// Shared ActonAI runtime
-    acton_ai: Option<Arc<ActonAI>>,
+    /// ActonAI runtime (Clone via internal Arc)
+    acton_ai: Option<ActonAI>,
     /// Handle to the MemoryStore actor
     store_handle: Option<ActorHandle>,
     /// Number of active channel connections
     active_connections: usize,
+    /// Shared map of pending oneshot senders keyed by correlation ID.
+    /// The IPC handler inserts a sender before routing; the Router resolves
+    /// it when `ConversationResponse` arrives.
+    pending_responses: Arc<DashMap<String, tokio::sync::oneshot::Sender<String>>>,
 }
 
 impl Router {
@@ -181,6 +188,7 @@ impl Router {
             acton_ai: None,
             store_handle: None,
             active_connections: 0,
+            pending_responses: Arc::new(DashMap::new()),
         }
     }
 
@@ -345,11 +353,16 @@ impl Router {
 /// Creates a new router actor with message handlers registered and starts it.
 /// The caller must send a `SetupRouter` message to provide ActonAI and
 /// MemoryStore references before routing messages.
-pub async fn spawn_router(runtime: &mut ActorRuntime, config: RouterConfig) -> ActorHandle {
+pub async fn spawn_router(
+    runtime: &mut ActorRuntime,
+    config: RouterConfig,
+    pending_responses: Arc<DashMap<String, tokio::sync::oneshot::Sender<String>>>,
+) -> ActorHandle {
     let mut builder = runtime.new_actor_with_name::<Router>("router".to_string());
 
     // Set initial config on the model
     builder.model.config = config;
+    builder.model.pending_responses = pending_responses;
 
     // SetupRouter: receive shared resources
     builder.mutate_on::<SetupRouter>(|actor, ctx| {
@@ -361,10 +374,32 @@ pub async fn spawn_router(runtime: &mut ActorRuntime, config: RouterConfig) -> A
         Reply::ready()
     });
 
+    // StoreConversationHandle: internal message to cache a conversation handle
+    builder.mutate_on::<StoreConversationHandle>(|actor, ctx| {
+        let msg = ctx.message();
+        actor
+            .model
+            .conversation_handles
+            .insert(msg.key.clone(), msg.handle.clone());
+        debug!(key = %msg.key, "cached conversation actor handle");
+        Reply::ready()
+    });
+
+    // ConversationResponse: resolve the pending oneshot for the IPC handler
+    builder.mutate_on::<ConversationResponse>(|actor, ctx| {
+        let msg = ctx.message().clone();
+        let correlation_id = msg.correlation_id.to_string();
+        if let Some((_, tx)) = actor.model.pending_responses.remove(&correlation_id) {
+            let _ = tx.send(msg.content);
+        } else {
+            warn!(correlation_id = %correlation_id, "no pending response for correlation ID");
+        }
+        Reply::ready()
+    });
+
     // RouteMessage: forward to conversation actor (auto-spawn if needed)
     builder.mutate_on::<RouteMessage>(|actor, ctx| {
         let msg = ctx.message().clone();
-        let reply_envelope = ctx.reply_envelope();
         let conv_key = msg.conversation_id.to_string();
 
         // Update or create tracking metadata
@@ -374,20 +409,8 @@ pub async fn spawn_router(runtime: &mut ActorRuntime, config: RouterConfig) -> A
             if actor.model.conversations.len() >= actor.model.config.max_conversations {
                 actor.model.cleanup_expired();
                 if actor.model.conversations.len() >= actor.model.config.max_conversations {
-                    let correlation_id = msg.correlation_id.clone();
-                    let handle = tokio::spawn(async move {
-                        reply_envelope
-                            .send(MessageRouted {
-                                correlation_id,
-                                success: false,
-                                response_content: None,
-                                error: Some("maximum conversations reached".to_string()),
-                            })
-                            .await;
-                    });
-                    return Reply::pending(async move {
-                        let _ = handle.await;
-                    });
+                    warn!("maximum conversations reached, dropping message");
+                    return Reply::ready();
                 }
             }
             let tracked = TrackedConversation::new(msg.conversation_id.clone(), channel_id.clone());
@@ -399,24 +422,17 @@ pub async fn spawn_router(runtime: &mut ActorRuntime, config: RouterConfig) -> A
         // Check if we already have a conversation actor handle
         let existing_handle = actor.model.conversation_handles.get(&conv_key).cloned();
         let acton_ai = actor.model.acton_ai.clone();
-        let store = actor.model.store_handle.clone();
         let conversation_id = msg.conversation_id.clone();
         let mut runtime = actor.runtime().clone();
+        let router_self_handle = actor.handle().clone();
 
-        let handle = tokio::spawn(async move {
+        Reply::pending(async move {
             // Get or spawn conversation actor
             let conv_handle = if let Some(h) = existing_handle {
                 h
             } else {
-                let (Some(ai), Some(store_handle)) = (&acton_ai, store) else {
-                    reply_envelope
-                        .send(MessageRouted {
-                            correlation_id: msg.correlation_id.clone(),
-                            success: false,
-                            response_content: None,
-                            error: Some("router not initialized with ActonAI/MemoryStore".to_string()),
-                        })
-                        .await;
+                let Some(ai) = &acton_ai else {
+                    warn!("router not initialized with ActonAI");
                     return;
                 };
 
@@ -424,41 +440,33 @@ pub async fn spawn_router(runtime: &mut ActorRuntime, config: RouterConfig) -> A
 
                 new_handle
                     .send(SetupConversation {
-                        acton_ai: Arc::clone(ai),
-                        store: store_handle,
-                        system_prompt: None,
+                        acton_ai: ai.clone(),
+                        system_prompt: Some("You are a helpful AI assistant.".to_string()),
                         channel_id,
+                    })
+                    .await;
+
+                // Cache the handle back on the Router via internal message
+                router_self_handle
+                    .send(StoreConversationHandle {
+                        key: conv_key.clone(),
+                        handle: new_handle.clone(),
                     })
                     .await;
 
                 new_handle
             };
 
-            // Forward message to conversation actor
-            conv_handle
+            // Use create_envelope so ConversationActor's reply_envelope()
+            // routes ConversationResponse back to this Router actor.
+            let envelope = router_self_handle.create_envelope(Some(conv_handle.reply_address()));
+            envelope
                 .send(ConversationUserMessage {
                     correlation_id: msg.correlation_id.clone(),
                     content: msg.content,
                     sender: msg.sender,
                 })
                 .await;
-
-            // The ConversationActor replies through the reply_envelope chain.
-            // Since the actor system handles envelope forwarding, the reply
-            // from ConversationActor flows back to the original caller.
-        });
-
-        // Store the handle for future messages (we do this optimistically -
-        // the spawn may still be in progress, but it will be complete by
-        // the time the next RouteMessage arrives)
-        if !actor.model.conversation_handles.contains_key(&conv_key) {
-            // We'll set this after spawn completes via a separate message
-            // For now, each RouteMessage will re-check and potentially re-spawn
-            // This is safe because spawn_conversation is idempotent by name
-        }
-
-        Reply::pending(async move {
-            let _ = handle.await;
         })
     });
 
@@ -473,16 +481,12 @@ pub async fn spawn_router(runtime: &mut ActorRuntime, config: RouterConfig) -> A
         {
             Ok(conversation_id) => {
                 let conv_id = conversation_id.clone();
-                let handle = tokio::spawn(async move {
+                Reply::pending(async move {
                     reply_envelope
                         .send(ConversationCreated {
                             conversation_id: conv_id,
                         })
                         .await;
-                });
-
-                Reply::pending(async move {
-                    let _ = handle.await;
                 })
             }
             Err(e) => {
@@ -502,13 +506,10 @@ pub async fn spawn_router(runtime: &mut ActorRuntime, config: RouterConfig) -> A
             let end_msg = crate::conversation::messages::EndConversation {
                 conversation_id: conversation_id.clone(),
             };
-            let handle = tokio::spawn(async move {
-                conv_handle.send(end_msg).await;
-                let _ = conv_handle.stop().await;
-            });
             actor.model.end_conversation(&conversation_id);
             return Reply::pending(async move {
-                let _ = handle.await;
+                conv_handle.send(end_msg).await;
+                let _ = conv_handle.stop().await;
             });
         }
 
@@ -520,15 +521,20 @@ pub async fn spawn_router(runtime: &mut ActorRuntime, config: RouterConfig) -> A
     builder.mutate_on::<GetStats>(|actor, ctx| {
         let stats = actor.model.stats();
         let reply = ctx.reply_envelope();
-        let handle = tokio::spawn(async move {
-            reply.send(stats).await;
-        });
         Reply::pending(async move {
-            let _ = handle.await;
+            reply.send(stats).await;
         })
     });
 
     builder.start().await
+}
+
+/// Internal message to cache a conversation actor handle on the Router.
+/// Sent from the async block after spawning a new ConversationActor.
+#[acton_message]
+struct StoreConversationHandle {
+    key: String,
+    handle: ActorHandle,
 }
 
 #[cfg(test)]

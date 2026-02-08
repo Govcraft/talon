@@ -36,14 +36,18 @@ tasks:
   telegram:
     desc: Start only the Telegram bot (needs sudo for credstore)
     deps: [build]
-    cmd: sudo RUST_LOG={{.RUST_LOG}} ./target/debug/talon-telegram
+    cmd: sudo XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" RUST_LOG={{.RUST_LOG}} ./target/debug/talon-telegram
 
   dev:
     desc: Start daemon and Telegram bot for development
     deps: [build]
     cmd: |
+      # Kill any old talon processes before starting
+      pkill -f 'talon-daemon' 2>/dev/null || true
+      sudo pkill -f 'talon-telegram' 2>/dev/null || true
+      sleep 1
       trap 'kill 0' EXIT
       RUST_LOG={{.RUST_LOG}} ./target/debug/talon-daemon 2>&1 &
       sleep 2
-      sudo RUST_LOG={{.RUST_LOG}} ./target/debug/talon-telegram 2>&1 &
+      sudo XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" RUST_LOG={{.RUST_LOG}} ./target/debug/talon-telegram 2>&1 &
       wait

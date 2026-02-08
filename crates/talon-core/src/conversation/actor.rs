@@ -1,12 +1,14 @@
 //! Conversation actor implementation
 //!
 //! Each conversation is managed by its own actor instance, holding
-//! message history and delegating to ActonAI for LLM processing.
-//! Messages are persisted to the MemoryStore actor for durability.
+//! an acton-ai `Conversation` handle that manages history internally.
+//! The `Conversation` is `Clone + Send + 'static` with zero-mutex
+//! design via actor mailbox serialization.
+//!
+//! The `ConversationActor` owns both the `ActonAI` reference and the
+//! `Conversation` handle, ensuring the internal actor lifecycle is
+//! tied to this actor rather than an ephemeral spawn block.
 
-use std::sync::Arc;
-
-use acton_ai::memory::SaveMessage;
 use acton_ai::prelude::*;
 use tracing::{debug, error, warn};
 
@@ -18,8 +20,9 @@ use crate::types::{ChannelId, ConversationId, SenderId};
 /// Conversation actor state
 ///
 /// Each conversation is managed by its own actor instance.
-/// State includes the LLM runtime reference, persistent store handle,
-/// and in-memory message history.
+/// State includes the acton-ai `ActonAI` reference (kept alive to
+/// anchor the runtime) and a `Conversation` handle which manages
+/// history, system prompt, and LLM interaction internally.
 #[acton_actor]
 pub struct ConversationActor {
     /// Unique conversation identifier
@@ -28,14 +31,10 @@ pub struct ConversationActor {
     sender: Option<SenderId>,
     /// Channel this conversation belongs to
     channel_id: ChannelId,
-    /// Shared ActonAI runtime for LLM interaction
-    acton_ai: Option<Arc<ActonAI>>,
-    /// Handle to the MemoryStore actor for persistence
-    store: Option<ActorHandle>,
-    /// In-memory message history for this conversation
-    history: Vec<Message>,
-    /// Optional system prompt
-    system_prompt: Option<String>,
+    /// ActonAI runtime reference — held to keep the internal runtime alive
+    acton_ai: Option<ActonAI>,
+    /// acton-ai Conversation handle that manages history internally
+    conversation: Option<Conversation>,
     /// Conversation turn count
     turn_count: usize,
 }
@@ -59,86 +58,91 @@ impl ConversationActor {
         self.turn_count
     }
 
-    /// Get message history
+    /// Get message history snapshot from the Conversation handle
     #[must_use]
-    pub fn history(&self) -> &[Message] {
-        &self.history
+    pub fn history(&self) -> Vec<Message> {
+        self.conversation
+            .as_ref()
+            .map(|c| c.history())
+            .unwrap_or_default()
     }
+}
+
+/// Internal message to store a built Conversation on actor state
+#[acton_message]
+struct ConversationBuilt {
+    conversation: Conversation,
 }
 
 /// Spawn and configure a ConversationActor
 ///
 /// Creates a new actor with message handlers registered and starts it.
 /// The caller must send a `SetupConversation` message to initialize
-/// the actor with ActonAI and MemoryStore references.
+/// the actor with an `ActonAI` reference. The actor builds its own
+/// `Conversation` handle during setup, ensuring the lifecycle is
+/// properly owned.
 pub async fn spawn_conversation(runtime: &mut ActorRuntime, id: &ConversationId) -> ActorHandle {
     let mut builder =
         runtime.new_actor_with_name::<ConversationActor>(format!("conversation_{id}"));
 
-    // SetupConversation: initialize shared resources
+    // SetupConversation: store ActonAI and build the Conversation handle
     builder.mutate_on::<SetupConversation>(|actor, ctx| {
         let msg = ctx.message().clone();
-        actor.model.acton_ai = Some(msg.acton_ai);
-        actor.model.store = Some(msg.store);
-        actor.model.system_prompt = msg.system_prompt;
+        actor.model.acton_ai = Some(msg.acton_ai.clone());
         actor.model.channel_id = msg.channel_id;
 
+        let conversation_id = actor.model.id.clone();
+        let self_handle = actor.handle().clone();
+
+        Reply::pending(async move {
+            let mut conv_builder = msg.acton_ai.conversation();
+            if let Some(ref system) = msg.system_prompt {
+                conv_builder = conv_builder.system(system.as_str());
+            }
+            let conv = conv_builder.build().await;
+
+            debug!(
+                conversation_id = %conversation_id,
+                "conversation built, storing on actor"
+            );
+
+            self_handle
+                .send(ConversationBuilt { conversation: conv })
+                .await;
+        })
+    });
+
+    // ConversationBuilt: store the built Conversation on actor state
+    builder.mutate_on::<ConversationBuilt>(|actor, ctx| {
+        actor.model.conversation = Some(ctx.message().conversation.clone());
         debug!(
             conversation_id = %actor.model.id,
             "conversation actor initialized"
         );
-
         Reply::ready()
     });
 
-    // ConversationUserMessage: process user input through LLM
+    // ConversationUserMessage: process user input through the Conversation handle
     builder.mutate_on::<ConversationUserMessage>(|actor, ctx| {
         let msg = ctx.message().clone();
         let reply_envelope = ctx.reply_envelope();
-
-        // Capture state we need for the async block
-        let ai = actor.model.acton_ai.clone();
-        let store = actor.model.store.clone();
-        let conversation_id = actor.model.id.clone();
-        let system_prompt = actor.model.system_prompt.clone();
 
         // Set sender on first message
         if actor.model.sender.is_none() {
             actor.model.sender = Some(msg.sender.clone());
         }
 
-        // Append user message to history
-        let user_message = Message::user(&msg.content);
-        actor.model.history.push(user_message.clone());
         actor.model.turn_count += 1;
 
-        // Clone history for the async LLM call
-        let history = actor.model.history.clone();
+        let conversation = actor.model.conversation.clone();
+        let conversation_id = actor.model.id.clone();
         let correlation_id = msg.correlation_id.clone();
 
-        // We need a handle to send the assistant message back to ourselves
-        let self_handle = actor.handle().clone();
-
-        let handle = tokio::spawn(async move {
-            // Persist user message to MemoryStore
-            if let Some(ref store) = store {
-                let store_conv_id = acton_ai::prelude::ConversationId::parse(
-                    &conversation_id.to_string(),
-                )
-                .unwrap_or_default();
-                store
-                    .send(SaveMessage {
-                        conversation_id: store_conv_id,
-                        message: user_message,
-                    })
-                    .await;
-            }
-
-            // Process through ActonAI
-            let Some(ai) = ai else {
+        Reply::pending(async move {
+            let Some(conv) = conversation else {
                 warn!(
                     conversation_id = %conversation_id,
-                    "no ActonAI configured, echoing message"
+                    "no Conversation configured, echoing message"
                 );
                 let echo_content = format!("Echo (no AI): {}", msg.content);
                 reply_envelope
@@ -150,12 +154,7 @@ pub async fn spawn_conversation(runtime: &mut ActorRuntime, id: &ConversationId)
                 return;
             };
 
-            let mut prompt_builder = ai.continue_with(history);
-            if let Some(ref system) = system_prompt {
-                prompt_builder = prompt_builder.system(system.as_str());
-            }
-
-            match prompt_builder.collect().await {
+            match conv.send(&msg.content).await {
                 Ok(response) => {
                     debug!(
                         conversation_id = %conversation_id,
@@ -171,30 +170,6 @@ pub async fn spawn_conversation(runtime: &mut ActorRuntime, id: &ConversationId)
                         response.text
                     };
 
-                    let assistant_message = Message::assistant(&response_text);
-
-                    // Persist assistant message to MemoryStore
-                    if let Some(ref store) = store {
-                        let store_conv_id = acton_ai::prelude::ConversationId::parse(
-                            &conversation_id.to_string(),
-                        )
-                        .unwrap_or_default();
-                        store
-                            .send(SaveMessage {
-                                conversation_id: store_conv_id,
-                                message: assistant_message.clone(),
-                            })
-                            .await;
-                    }
-
-                    // Send assistant message back to actor to append to history
-                    self_handle
-                        .send(AppendAssistantMessage {
-                            message: assistant_message,
-                        })
-                        .await;
-
-                    // Reply with the response
                     reply_envelope
                         .send(ConversationResponse {
                             correlation_id,
@@ -216,17 +191,7 @@ pub async fn spawn_conversation(runtime: &mut ActorRuntime, id: &ConversationId)
                         .await;
                 }
             }
-        });
-
-        Reply::pending(async move {
-            let _ = handle.await;
         })
-    });
-
-    // Internal message to append assistant response to history
-    builder.mutate_on::<AppendAssistantMessage>(|actor, ctx| {
-        actor.model.history.push(ctx.message().message.clone());
-        Reply::ready()
     });
 
     // EndConversation: cleanup
@@ -236,20 +201,13 @@ pub async fn spawn_conversation(runtime: &mut ActorRuntime, id: &ConversationId)
             turns = actor.model.turn_count,
             "ending conversation"
         );
-        actor.model.history.clear();
+        if let Some(conv) = &actor.model.conversation {
+            conv.clear();
+        }
+        actor.model.conversation = None;
         actor.model.acton_ai = None;
-        actor.model.store = None;
         Reply::ready()
     });
 
     builder.start().await
-}
-
-/// Internal message to append an assistant message to history
-///
-/// This is used to send the LLM response back to the actor from the
-/// async processing task, ensuring history is updated on the actor thread.
-#[acton_message]
-struct AppendAssistantMessage {
-    message: Message,
 }
