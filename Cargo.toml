@@ -1,70 +1,85 @@
 [workspace]
-resolver = "2"
 members = [
-    "crates/talon-core",
-    "crates/talon-channels",
-    "crates/talon-cli",
-    "bin/talon-core",
-    "bin/talon-telegram",
-    "bin/talon-discord",
+    "crates/talon-types",
+    "crates/talon-inference",
+    "crates/talon-gateway",
+    "crates/talon-channel-sdk",
+    "crates/talon-telegram",
+    "crates/talon-discord",
+    "crates/talon-slack",
+    "crates/talon-web",
+    "crates/talon-admin",
 ]
+default-members = ["crates/talon-gateway"]
+resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/Govcraft/talon"
-authors = ["Roland R. Rodriguez, Jr. <rrrodzilla@proton.me>"]
+authors = ["roland@govcraft.ai"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/govcraft/talon"
 
 [workspace.dependencies]
-# Core framework
-acton-ai = { version = "0.25", features = ["agent-skills"] }
-acton-reactive = { version = "7.1", features = ["ipc"] }
-acton-service = { version = "0.15" }
+# Talon crates
+talon-types = { path = "crates/talon-types" }
+talon-inference = { path = "crates/talon-inference" }
+talon-gateway = { path = "crates/talon-gateway" }
+talon-channel-sdk = { path = "crates/talon-channel-sdk" }
 
-# Identity & Security
-agent-uri = { version = "0.4", features = ["serde"] }
-agent-uri-attestation = "0.2"
-agent-uri-dht = { version = "0.1", features = ["serde"] }
-omnibor = "0.10"
+# Frameworks
+acton-service = { version = "0.16", features = ["http", "grpc", "websocket", "sse", "surrealdb", "cache", "events", "observability", "otel-metrics", "cedar-authz", "governor", "audit", "resilience"] }
+acton-ai = "0.25"
 
-# Async runtime
-tokio = { version = "1.49", features = ["full"] }
-futures = "0.3"
+# Async
+tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
+futures = "0.3"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# IDs
-mti = { version = "1.1", features = ["serde"] }
+# gRPC
+tonic = "0.14"
+tonic-build = "0.14"
+tonic-prost = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
-# CLI
-clap = { version = "4", features = ["derive"] }
+# Unique IDs
+ulid = { version = "1", features = ["serde"] }
+uuid = { version = "1", features = ["v7", "serde"] }
 
-# Channel dependencies
-teloxide = "0.17"
-serenity = "0.12"
-crossterm = { version = "0.29", features = ["event-stream"] }
-ratatui = "0.30"
+# Database
+surrealdb = { version = "2.6", features = ["protocol-ws", "kv-mem"] }
+
+# HTTP framework (re-exported by acton-service, explicit for middleware access)
+axum = "0.8"
+
+# Rate limiting
+governor = "0.10"
 
 # Security
-keyring = "3"
-secrecy = "0.10"
+blake3 = "1"
+regex = "1"
 
-[workspace.lints.rust]
-unsafe_code = "forbid"
+# Config
+figment = { version = "0.10", features = ["toml", "env"] }
+toml = "0.8"
 
-[workspace.lints.clippy]
-all = "deny"
-unwrap_used = "deny"
-expect_used = "deny"
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Tenants - Talon Admin{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <h2 class="text-2xl font-bold">Tenants</h2>
+    <a href="/v1/tenants/new"
+       class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors">
+        New Tenant
+    </a>
+</div>
+
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+            <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Slug</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Plan</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+            </tr>
+        </thead>
+        <tbody id="tenant-list" class="bg-white divide-y divide-gray-200">
+            {% for tenant in tenants %}
+            {% include "partials/tenant_row.html" %}
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if tenants.is_empty() %}
+    <div class="p-6 text-center text-gray-500">
+        No tenants found. <a href="/v1/tenants/new" class="text-blue-600 hover:underline">Create one</a>.
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

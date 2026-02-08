@@ -1,0 +1,3 @@
+[service]
+name = "talon-admin"
+port = 8082

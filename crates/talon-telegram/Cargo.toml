@@ -1,0 +1,29 @@
+[package]
+name = "talon-telegram"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Telegram channel service for Talon AI gateway"
+
+[[bin]]
+name = "talon-telegram"
+path = "src/main.rs"
+
+[dependencies]
+talon-types = { workspace = true }
+talon-channel-sdk = { workspace = true }
+
+# Telegram
+teloxide = { version = "0.13", features = ["macros"] }
+
+# Acton service for health endpoint + config
+acton-service = { version = "0.16", features = ["http", "observability"] }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+futures = { workspace = true }
+anyhow = { workspace = true }

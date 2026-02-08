@@ -1,0 +1,26 @@
+[package]
+name = "talon-admin"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Admin dashboard for the Talon AI gateway"
+
+[[bin]]
+name = "talon-admin"
+path = "src/main.rs"
+
+[dependencies]
+talon-types = { workspace = true }
+
+acton-service = { version = "0.16", features = ["http", "sse", "observability"] }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+
+askama = "0.13"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

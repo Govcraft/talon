@@ -1,0 +1,22 @@
+[package]
+name = "talon-discord"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Discord channel adapter for the Talon AI gateway"
+
+[[bin]]
+name = "talon-discord"
+path = "src/main.rs"
+
+[dependencies]
+talon-types = { workspace = true }
+talon-channel-sdk = { workspace = true }
+
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "rustls_backend"] }
+
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

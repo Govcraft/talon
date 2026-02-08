@@ -1,0 +1,39 @@
+[package]
+name = "talon-gateway"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "AI inference gateway service for Talon"
+
+[[bin]]
+name = "talon-gateway"
+path = "src/main.rs"
+
+[dependencies]
+talon-types = { workspace = true }
+
+acton-service = { workspace = true }
+acton-ai = { workspace = true }
+
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+prost = { workspace = true }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+ulid = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+anyhow = { workspace = true }
+surrealdb = { workspace = true }
+blake3 = { workspace = true }
+axum = { workspace = true }
+governor = { workspace = true }
+tokio-stream = "0.1"
+
+[build-dependencies]
+acton-service = { workspace = true }

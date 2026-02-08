@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package talon.gateway;
+
+import "talon/common.proto";
+
+/// Gateway service exposed to channel services.
+service GatewayService {
+    /// Send a message and get a complete response.
+    rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+
+    /// Send a message and stream back tokens.
+    rpc SendMessageStreaming(SendMessageRequest) returns (stream StreamChunk);
+
+    /// Register a channel service with the gateway.
+    rpc RegisterChannel(RegisterChannelRequest) returns (RegisterChannelResponse);
+
+    /// Health check / heartbeat from channel.
+    rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+    /// Query session state.
+    rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
+}
+
+message SendMessageRequest {
+    talon.SessionKey session_key = 1;
+    string text = 2;
+    repeated talon.Attachment attachments = 3;
+    bool stream = 4;
+    optional string system_prompt = 5;
+}
+
+message SendMessageResponse {
+    string text = 1;
+    string session_id = 2;
+    string model = 3;
+    uint32 token_count = 4;
+}
+
+message StreamChunk {
+    oneof chunk {
+        string token = 1;
+        string tool_call = 2;
+        SendMessageResponse final_response = 3;
+        string error = 4;
+    }
+}
+
+message RegisterChannelRequest {
+    string channel_id = 1;
+    string service_url = 2;
+    string tenant_id = 3;
+}
+
+message RegisterChannelResponse {
+    bool success = 1;
+    string token = 2;
+}
+
+message HeartbeatRequest {
+    string channel_id = 1;
+}
+
+message HeartbeatResponse {
+    bool ok = 1;
+}
+
+message GetSessionRequest {
+    talon.SessionKey session_key = 1;
+}
+
+message GetSessionResponse {
+    string session_id = 1;
+    string status = 2;
+    uint32 message_count = 3;
+    uint64 total_tokens = 4;
+}

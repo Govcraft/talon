@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package talon;
+
+/// Composite key identifying a conversation session.
+message SessionKey {
+    string tenant_id = 1;
+    string channel_id = 2;
+    string sender_id = 3;
+}
+
+/// File or media attachment.
+message Attachment {
+    string filename = 1;
+    string content_type = 2;
+    bytes data = 3;
+}
+
+/// Timestamp as RFC 3339 string.
+message Timestamp {
+    string value = 1;
+}

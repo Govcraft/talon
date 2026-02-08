@@ -1,0 +1,25 @@
+[package]
+name = "talon-web"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Web/API channel service for Talon AI gateway"
+
+[[bin]]
+name = "talon-web"
+path = "src/main.rs"
+
+[dependencies]
+talon-types = { workspace = true }
+talon-channel-sdk = { workspace = true }
+
+acton-service = { version = "0.16", features = ["http", "websocket", "sse", "observability"] }
+
+tokio = { workspace = true }
+tokio-stream = "0.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }
+anyhow = { workspace = true }

@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package talon.channel;
+
+import "talon/common.proto";
+
+/// Channel service exposed to the gateway for push notifications.
+service ChannelService {
+    /// Push a message to the channel (e.g., proactive notifications).
+    rpc PushMessage(PushMessageRequest) returns (PushMessageResponse);
+
+    /// Request channel status.
+    rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+}
+
+message PushMessageRequest {
+    talon.SessionKey session_key = 1;
+    string text = 2;
+}
+
+message PushMessageResponse {
+    bool delivered = 1;
+}
+
+message GetStatusRequest {}
+
+message GetStatusResponse {
+    string channel_id = 1;
+    bool healthy = 2;
+    uint32 active_connections = 3;
+}

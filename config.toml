@@ -1,0 +1,27 @@
+[service]
+name = "talon-gateway"
+port = 8080
+
+[surrealdb]
+url = "mem://"
+namespace = "system"
+database = "admin"
+max_retries = 3
+retry_delay_secs = 1
+optional = true
+lazy_init = true
+
+[cedar]
+enabled = false
+policy_path = "policies/talon.cedar"
+hot_reload = true
+hot_reload_interval_secs = 30
+fail_open = true
+cache_enabled = false
+
+[audit]
+enabled = true
+audit_all_requests = false
+audit_auth_events = true
+audited_routes = ["/api/v1/tenants/*", "/api/v1/tenants/*/agents/*"]
+excluded_routes = ["/health", "/ready", "/metrics"]

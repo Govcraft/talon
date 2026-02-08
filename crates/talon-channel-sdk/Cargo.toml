@@ -1,0 +1,25 @@
+[package]
+name = "talon-channel-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Channel service SDK for Talon AI gateway"
+
+[dependencies]
+talon-types = { workspace = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+futures = { workspace = true }
+
+# For proto-generated code
+acton-service = { workspace = true }
+
+[build-dependencies]
+acton-service = { workspace = true }

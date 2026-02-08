@@ -1,53 +1,85 @@
 version: '3'
 
-dotenv: ['.env']
-
 vars:
-  RUST_LOG: '{{.RUST_LOG | default "info"}}'
+  CARGO_ARGS: ''
 
 tasks:
-  build:
-    desc: Build all binaries
-    sources:
-      - Cargo.toml
-      - Cargo.lock
-      - crates/**/*.rs
-      - crates/**/Cargo.toml
-      - bin/**/*.rs
-      - bin/**/Cargo.toml
-    cmd: cargo build
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list-all
 
   check:
-    desc: Fast compilation check
-    cmd: cargo check
+    desc: Run cargo check on workspace
+    cmds:
+      - cargo check --workspace {{.CARGO_ARGS}}
+
+  build:
+    desc: Build all workspace members
+    cmds:
+      - cargo build --workspace {{.CARGO_ARGS}}
 
   test:
     desc: Run all tests
-    cmd: cargo nextest run
+    cmds:
+      - cargo nextest run --workspace {{.CARGO_ARGS}}
 
   lint:
-    desc: Lint with zero tolerance
-    cmd: cargo clippy -- -D warnings
+    desc: Run clippy with strict warnings
+    cmds:
+      - cargo clippy --workspace -- -D warnings
 
-  daemon:
-    desc: Start only the daemon
-    cmd: RUST_LOG={{.RUST_LOG}} cargo run --bin talon-daemon
+  fmt:
+    desc: Format all code
+    cmds:
+      - cargo fmt --all
 
-  telegram:
-    desc: Start only the Telegram bot (needs sudo for credstore)
-    deps: [build]
-    cmd: sudo XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" RUST_LOG={{.RUST_LOG}} ./target/debug/talon-telegram
+  fmt-check:
+    desc: Check formatting
+    cmds:
+      - cargo fmt --all -- --check
 
-  dev:
-    desc: Start daemon and Telegram bot for development
-    deps: [build]
-    cmd: |
-      # Kill any old talon processes before starting
-      pkill -f 'talon-daemon' 2>/dev/null || true
-      sudo pkill -f 'talon-telegram' 2>/dev/null || true
-      sleep 1
-      trap 'kill 0' EXIT
-      RUST_LOG={{.RUST_LOG}} ./target/debug/talon-daemon 2>&1 &
-      sleep 2
-      sudo XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" RUST_LOG={{.RUST_LOG}} ./target/debug/talon-telegram 2>&1 &
-      wait
+  gateway:
+    desc: Run the gateway service
+    cmds:
+      - cargo run -p talon-gateway {{.CARGO_ARGS}}
+
+  proto:
+    desc: Compile protobuf definitions
+    cmds:
+      - cargo build -p talon-channel-sdk
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - cargo clean
+
+  ci:
+    desc: Run full CI pipeline
+    cmds:
+      - task: fmt-check
+      - task: lint
+      - task: test
+
+  # ── Docker ──────────────────────────────────────────────────────────────
+
+  docker-build:
+    desc: Build all Docker images
+    cmds:
+      - docker compose build
+
+  docker-up:
+    desc: Start the Docker Compose development stack
+    cmds:
+      - docker compose up -d
+      - echo "Services starting... gateway=8080 web=8081 admin=8082 surrealdb=8000"
+
+  docker-down:
+    desc: Stop the Docker Compose stack
+    cmds:
+      - docker compose down
+
+  docker-logs:
+    desc: Follow logs from the Docker Compose stack
+    cmds:
+      - docker compose logs -f

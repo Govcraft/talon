@@ -1,0 +1,19 @@
+<tr>
+    <td class="px-6 py-4 whitespace-nowrap">
+        <a href="/v1/tenants/{{ tenant.id }}" class="text-blue-600 hover:underline font-medium">{{ tenant.name }}</a>
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">{{ tenant.slug }}</td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ "{:?}"|format(tenant.plan) }}</td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ "{:?}"|format(tenant.status) }}</td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ tenant.created_at.format("%Y-%m-%d %H:%M UTC") }}</td>
+    <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+        <a href="/v1/tenants/{{ tenant.id }}" class="text-blue-600 hover:underline mr-3">View</a>
+        <button hx-post="/v1/tenants/{{ tenant.id }}/delete"
+                hx-confirm="Delete tenant '{{ tenant.name }}'? This cannot be undone."
+                hx-target="closest tr"
+                hx-swap="outerHTML"
+                class="text-red-600 hover:underline">
+            Delete
+        </button>
+    </td>
+</tr>

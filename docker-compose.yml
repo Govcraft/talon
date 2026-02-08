@@ -1,0 +1,139 @@
+services:
+  # ---------------------------------------------------------------------------
+  # SurrealDB - Document/graph database
+  # ---------------------------------------------------------------------------
+  surrealdb:
+    image: surrealdb/surrealdb:v2.6
+    command: start --user root --pass root memory
+    ports:
+      - "8000:8000"
+    environment:
+      SURREAL_LOG: info
+    healthcheck:
+      test: ["CMD", "surreal", "is-ready", "--endpoint", "http://localhost:8000"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # Gateway - AI inference gateway (core service)
+  # ---------------------------------------------------------------------------
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BINARY: talon-gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      surrealdb:
+        condition: service_healthy
+    environment:
+      ACTON_SURREALDB__URL: ws://surrealdb:8000
+      ACTON_SURREALDB__USERNAME: root
+      ACTON_SURREALDB__PASSWORD: root
+      RUST_LOG: info,talon_gateway=debug
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Web - HTTP/WebSocket channel
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BINARY: talon-web
+    ports:
+      - "8081:8081"
+    depends_on:
+      - gateway
+    environment:
+      TALON_GATEWAY_URL: http://gateway:8080
+      TALON_TENANT_ID: default
+      RUST_LOG: info,talon_web=debug
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Admin - Dashboard
+  # ---------------------------------------------------------------------------
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BINARY: talon-admin
+    ports:
+      - "8082:8082"
+    depends_on:
+      - gateway
+    environment:
+      TALON_GATEWAY_URL: http://gateway:8080
+      RUST_LOG: info,talon_admin=debug
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Telegram channel (requires API token)
+  # Enable with: docker compose --profile telegram up
+  # ---------------------------------------------------------------------------
+  # telegram:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #     args:
+  #       BINARY: talon-telegram
+  #   profiles:
+  #     - telegram
+  #   depends_on:
+  #     - gateway
+  #   environment:
+  #     TELOXIDE_TOKEN: ${TELOXIDE_TOKEN}
+  #     TALON_GATEWAY_URL: http://gateway:8080
+  #     TALON_TENANT_ID: ${TALON_TELEGRAM_TENANT_ID:-default}
+  #     RUST_LOG: info,talon_telegram=debug
+  #   restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Discord channel (requires bot token)
+  # Enable with: docker compose --profile discord up
+  # ---------------------------------------------------------------------------
+  # discord:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #     args:
+  #       BINARY: talon-discord
+  #   profiles:
+  #     - discord
+  #   depends_on:
+  #     - gateway
+  #   environment:
+  #     DISCORD_TOKEN: ${DISCORD_TOKEN}
+  #     TALON_GATEWAY_URL: http://gateway:8080
+  #     TALON_TENANT_ID: ${TALON_DISCORD_TENANT_ID:-default}
+  #     RUST_LOG: info,talon_discord=debug
+  #   restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Slack channel (requires bot + app tokens)
+  # Enable with: docker compose --profile slack up
+  # ---------------------------------------------------------------------------
+  # slack:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #     args:
+  #       BINARY: talon-slack
+  #   profiles:
+  #     - slack
+  #   depends_on:
+  #     - gateway
+  #   environment:
+  #     SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+  #     SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+  #     TALON_GATEWAY_URL: http://gateway:8080
+  #     TALON_TENANT_ID: ${TALON_SLACK_TENANT_ID:-default}
+  #     RUST_LOG: info,talon_slack=debug
+  #   restart: unless-stopped
